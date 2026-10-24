@@ -7,7 +7,6 @@
 //  gamepad. Everything goes to the host through MNInput.
 //
 
-import AVFoundation
 import CoreHaptics
 import SwiftUI
 import UIKit
@@ -72,10 +71,9 @@ struct InputDeckView: View {
 
 // MARK: - Feedback
 
-/// What a press feels and sounds like. In the hand: a light tap for keys, a firmer click for
-/// mouse and gamepad buttons, a soft tick for latching a modifier. On a table, where iOS damps
-/// haptics by about 21 dB, keys get a full-strength Core Haptics burst with a short low tail
-/// (felt through the table rather than the fingertip) plus a key click through the media audio.
+/// What a press feels like. In the hand: a light tap for keys, a firmer click for mouse and
+/// gamepad buttons, a soft tick for latching a modifier. On a table, where iOS damps haptics
+/// by about 21 dB, every press plays the strongest Core Haptics pattern instead.
 private enum Feedback {
     static let key = UIImpactFeedbackGenerator(style: .light)
     static let click = UIImpactFeedbackGenerator(style: .medium)
@@ -83,8 +81,7 @@ private enum Feedback {
 
     static func keyPress() {
         if MNInputDeck.tabletop {
-            StrongHaptic.shared.play(intensity: 1.0)
-            KeyClickSound.shared.play()
+            StrongHaptic.shared.play()
         } else {
             key.impactOccurred(intensity: 0.7)
             key.prepare()
@@ -93,7 +90,7 @@ private enum Feedback {
 
     static func clickPress() {
         if MNInputDeck.tabletop {
-            StrongHaptic.shared.play(intensity: 1.0)
+            StrongHaptic.shared.play()
         } else {
             click.impactOccurred()
             click.prepare()
@@ -102,8 +99,7 @@ private enum Feedback {
 
     static func modifierToggle() {
         if MNInputDeck.tabletop {
-            StrongHaptic.shared.play(intensity: 0.8)
-            KeyClickSound.shared.play()
+            StrongHaptic.shared.play()
         } else {
             toggle.selectionChanged()
             toggle.prepare()
@@ -111,76 +107,54 @@ private enum Feedback {
     }
 }
 
-/// A full-intensity transient followed by 30 ms of low-sharpness rumble: the most energy a
-/// key-length haptic can carry, to get through the system's tabletop damping.
+/// The tabletop press: a full-intensity transient, then a full-intensity low rumble. These
+/// three numbers are the tuning knobs; they start at the maximum and get turned down by feel.
+private enum TabletopHaptic {
+    /// 0...1
+    static let intensity: Float = 1.0
+    /// Rumble after the tap, in seconds. Longer carries more energy through the table.
+    static let rumbleDuration: TimeInterval = 0.08
+    /// 0 = deepest. Low frequencies travel through a table better than sharp ones.
+    static let rumbleSharpness: Float = 0.0
+}
+
 private final class StrongHaptic {
     static let shared = StrongHaptic()
     private var engine: CHHapticEngine?
+    private var player: CHHapticPatternPlayer?
 
     private init() {
         guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
         engine = try? CHHapticEngine()
+        engine?.playsHapticsOnly = true
         engine?.isAutoShutdownEnabled = true
-        engine?.resetHandler = { [weak self] in try? self?.engine?.start() }
-    }
-
-    func play(intensity: Float) {
-        guard let engine else { return }
-        let events = [
-            CHHapticEvent(eventType: .hapticTransient, parameters: [
-                CHHapticEventParameter(parameterID: .hapticIntensity, value: intensity),
-                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.6),
-            ], relativeTime: 0),
-            CHHapticEvent(eventType: .hapticContinuous, parameters: [
-                CHHapticEventParameter(parameterID: .hapticIntensity, value: intensity),
-                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.1),
-            ], relativeTime: 0.005, duration: 0.03),
-        ]
-        do {
-            try engine.start()
-            let player = try engine.makePlayer(with: CHHapticPattern(events: events, parameters: []))
-            try player.start(atTime: CHHapticTimeImmediate)
-        } catch {
-            // No haptics this press; typing still works
+        engine?.resetHandler = { [weak self] in
+            self?.player = nil
+            try? self?.engine?.start()
         }
-    }
-}
-
-/// A short synthesized key click, played through the media volume alongside the stream's
-/// audio (the session is .playback, mix with others).
-private final class KeyClickSound {
-    static let shared = KeyClickSound()
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
-    private var buffer: AVAudioPCMBuffer?
-
-    private init() {
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
-        let frames = AVAudioFrameCount(44_100 * 0.018)
-        guard let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
-              let samples = pcm.floatChannelData?[0] else { return }
-        pcm.frameLength = frames
-        // A damped 2.4 kHz tick with a little noise: reads as a keycap, not a beep
-        var seed: UInt32 = 1
-        for i in 0..<Int(frames) {
-            let t = Float(i) / 44_100
-            seed = seed &* 1_664_525 &+ 1_013_904_223
-            let noise = Float(seed >> 8) / Float(1 << 24) * 2 - 1
-            samples[i] = (sin(2 * .pi * 2_400 * t) * 0.6 + noise * 0.4) * exp(-t * 320) * 0.5
-        }
-        buffer = pcm
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
     }
 
     func play() {
-        guard let buffer else { return }
-        if !engine.isRunning {
-            try? engine.start()
-        }
-        player.scheduleBuffer(buffer, at: nil, options: .interrupts)
-        if !player.isPlaying {
-            player.play()
+        guard let engine else { return }
+        do {
+            if player == nil {
+                let events = [
+                    CHHapticEvent(eventType: .hapticTransient, parameters: [
+                        CHHapticEventParameter(parameterID: .hapticIntensity, value: TabletopHaptic.intensity),
+                        CHHapticEventParameter(parameterID: .hapticSharpness, value: 1.0),
+                    ], relativeTime: 0),
+                    CHHapticEvent(eventType: .hapticContinuous, parameters: [
+                        CHHapticEventParameter(parameterID: .hapticIntensity, value: TabletopHaptic.intensity),
+                        CHHapticEventParameter(parameterID: .hapticSharpness, value: TabletopHaptic.rumbleSharpness),
+                    ], relativeTime: 0.005, duration: TabletopHaptic.rumbleDuration),
+                ]
+                player = try engine.makePlayer(with: CHHapticPattern(events: events, parameters: []))
+            }
+            try engine.start()
+            try player?.start(atTime: CHHapticTimeImmediate)
+        } catch {
+            // No haptics this press; typing still works
+            player = nil
         }
     }
 }
