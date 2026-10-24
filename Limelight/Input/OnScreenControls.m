@@ -16,6 +16,9 @@
 (y) ? (buttonFlags | (x)) : (buttonFlags & ~(x)))
 
 @implementation OnScreenControls {
+#if !TARGET_OS_TV
+    UIImpactFeedbackGenerator* _pressHaptic;
+#endif
     CALayer* _aButton;
     CALayer* _bButton;
     CALayer* _xButton;
@@ -792,8 +795,10 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
 - (BOOL)handleTouchDownEvent:touches {
     BOOL updated = false;
     BOOL stickTouch = false;
+    BOOL buttonPressed = false;
     for (UITouch* touch in touches) {
         CGPoint touchLocation = [touch locationInView:_view];
+        BOOL updatedBefore = updated;
         
         if (_aButton.superlayer != nil && [_aButton.presentationLayer hitTest:touchLocation]) {
             [_controllerSupport setButtonFlag:_controller flags:A_FLAG];
@@ -898,6 +903,9 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
             _rsTouch = touch;
             stickTouch = true;
         }
+        if (updated && !updatedBefore) {
+            buttonPressed = true;
+        }
         if (!updated && !stickTouch && [self isInDeadZone:touch]) {
             [_deadTouches addObject:touch];
             updated = true;
@@ -906,6 +914,16 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
     if (updated) {
         [_controllerSupport updateFinished:_controller];
     }
+#if !TARGET_OS_TV
+    // A tap you can feel for every button press
+    if (buttonPressed) {
+        if (_pressHaptic == nil) {
+            _pressHaptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        }
+        [_pressHaptic impactOccurredWithIntensity:0.8];
+        [_pressHaptic prepare];
+    }
+#endif
     return updated || stickTouch;
 }
 

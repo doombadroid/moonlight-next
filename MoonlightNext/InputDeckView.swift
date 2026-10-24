@@ -63,6 +63,20 @@ struct InputDeckView: View {
     }
 }
 
+// MARK: - Haptics
+
+/// Taps you can feel: light for keys, a firmer click for mouse and gamepad buttons, a soft
+/// tick for latching a modifier. Generators are kept warm so the first press isn't late.
+private enum Haptics {
+    static let key = UIImpactFeedbackGenerator(style: .light)
+    static let click = UIImpactFeedbackGenerator(style: .medium)
+    static let toggle = UISelectionFeedbackGenerator()
+
+    static func keyPress() { key.impactOccurred(intensity: 0.7); key.prepare() }
+    static func clickPress() { click.impactOccurred(); click.prepare() }
+    static func modifierToggle() { toggle.selectionChanged(); toggle.prepare() }
+}
+
 // MARK: - Press helper
 
 private extension View {
@@ -110,8 +124,10 @@ private final class KeyboardState: ObservableObject {
     func press(_ key: Key) {
         switch key.kind {
         case .modifier(let m):
+            Haptics.modifierToggle()
             if latched.contains(m) { latched.remove(m) } else { latched.insert(m) }
         default:
+            Haptics.keyPress()
             for (m, vk) in Self.modifierKeys where latched.contains(m) {
                 MNInput.keyDown(vk, modifiers: latched)
             }
@@ -241,7 +257,7 @@ private struct ClickButton: View {
                                             bottomTrailingRadius: corners.1, topTrailingRadius: corners.1)
                 .stroke(Color(hex: 0x1F1F25), lineWidth: 1))
             .contentShape(Rectangle())
-            .onPress(down: { pressed = true; MNInput.mouseButton(button, down: true) },
+            .onPress(down: { pressed = true; Haptics.clickPress(); MNInput.mouseButton(button, down: true) },
                      up: { pressed = false; MNInput.mouseButton(button, down: false) })
             .accessibilityAddTraits(.isButton)
     }
@@ -313,6 +329,7 @@ final class TrackpadUIView: UIView {
     }
 
     private func click(_ button: MNMouseButton) {
+        Haptics.clickPress()
         MNInput.mouseButton(button, down: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             MNInput.mouseButton(button, down: false)
@@ -387,7 +404,7 @@ private struct PadButton: View {
         .overlay(Capsule().strokeBorder(filled ? Color.clear : Color(hex: 0x2E2E35)))
         .scaleEffect(pressed ? 0.94 : 1)
         .contentShape(Capsule())
-        .onPress(down: { pressed = true; send(true) }, up: { pressed = false; send(false) })
+        .onPress(down: { pressed = true; Haptics.clickPress(); send(true) }, up: { pressed = false; send(false) })
         .accessibilityLabel(label)
         .accessibilityAddTraits(.isButton)
     }
