@@ -1,10 +1,10 @@
 {
-  "name": "Moonlight Next",
+  "name": "MoonLume",
   "identifier": "io.github.doombadroid.moonlight-next",
   "subtitle": "Moonlight game streaming, redesigned for iPhone Duo",
   "apps": [
     {
-      "name": "Moonlight Next",
+      "name": "MoonLume",
       "bundleIdentifier": "com.doombadroid.moonlightnext",
       "developerName": "doombadroid (fork of moonlight-stream/moonlight-ios)",
       "subtitle": "Stream games from your PC",

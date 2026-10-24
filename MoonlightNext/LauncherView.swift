@@ -49,7 +49,7 @@ struct LauncherView: View {
             } else {
                 EmptyState(icon: "desktopcomputer",
                            title: model.hosts.isEmpty ? "Searching for PCs on your network…" : "Choose a computer",
-                           message: "Moonlight Next finds PCs running Sunshine or GeForce Experience on your network.")
+                           message: "MoonLume finds PCs running Sunshine or GeForce Experience on your network.")
             }
         }
         .navigationSplitViewStyle(.balanced)

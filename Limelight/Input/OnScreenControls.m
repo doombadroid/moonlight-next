@@ -380,50 +380,76 @@ static float L3_Y;
 }
 
 // Squarer than a phone in landscape (the iPhone Duo's outer display is about 1.45:1): the
-// percentage layout below overlaps the sticks with the D-pad and buttons and pushes B off the
-// edge. Stack each side instead, D-pad over the left stick and ABXY over the right, and size
-// every cluster from its artwork so it stays inside the control area.
+// percentage layout below overlaps the sticks with the D-pad and buttons. This is the same
+// arrangement as the unfolded (iPad) layout, packed to the edges: D-pad and ABXY at the far
+// sides, the sticks inward and lower, shoulders stacked on the outer edges above them, Select
+// under the D-pad and Start under ABXY. It uses the full width, including the strip the
+// camera sits in, and only keeps clear of the camera hole itself and the home indicator.
+// Positions are points from the edges, taken from the design canvas (proposal D, 678x466).
+static const CGFloat SQUARE_MARGIN = 12;
+static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
+
 - (void) setupSquareControls
 {
-    CGRect a = _controlArea;
-    CGFloat gap = 4;
-    UIImage* left = [UIImage imageNamed:@"LeftButton"];
-    UIImage* up = [UIImage imageNamed:@"UpButton"];
-    UIImage* b = [UIImage imageNamed:@"BButton"];
-    UIImage* y = [UIImage imageNamed:@"YButton"];
-    UIImage* stick = [UIImage imageNamed:@"StickOuter"];
+    CGRect b = _view.bounds;
+    UIEdgeInsets safe = _view.safeAreaInsets;
+    CGFloat w = b.size.width;
+    CGFloat bottom = CGRectGetMaxY(b) - safe.bottom; // above the home indicator
+    CGFloat left = CGRectGetMinX(b) + SQUARE_MARGIN;
+    CGFloat right = CGRectGetMaxX(b) - SQUARE_MARGIN;
     UIImage* l1 = [UIImage imageNamed:@"L1"];
+    UIImage* l2 = [UIImage imageNamed:@"L2"];
+    UIImage* b1 = [UIImage imageNamed:@"BButton"];
+    UIImage* lb = [UIImage imageNamed:@"LeftButton"];
     UIImage* select = [UIImage imageNamed:@"SelectButton"];
+    UIImage* start = [UIImage imageNamed:@"StartButton"];
 
-    CGFloat dpadHalfW = D_PAD_DIST + left.size.width;
-    CGFloat dpadHalfH = D_PAD_DIST + up.size.height;
-    CGFloat buttonsHalfW = BUTTON_DIST + b.size.width;
-    CGFloat buttonsHalfH = BUTTON_DIST + y.size.height;
-    CGFloat stickHalf = stick.size.width / 2;
+    CGFloat dpadHalfW = D_PAD_DIST + lb.size.width;
+    CGFloat buttonsHalfW = BUTTON_DIST + b1.size.width;
+    CGFloat shoulderHalfW = MAX(l1.size.width, l2.size.width) / 2;
 
-    // Sticks at the bottom corners, where thumbs rest
-    LS_CENTER_X = CGRectGetMinX(a) + stickHalf + gap;
-    RS_CENTER_X = CGRectGetMaxX(a) - stickHalf - gap;
-    LS_CENTER_Y = RS_CENTER_Y = CGRectGetMaxY(a) - stickHalf - gap;
+    // Shoulders: L2 over L1 on the left edge, R2 over R1 on the right, below the camera corner
+    L2_X = left + shoulderHalfW;
+    R2_X = right - shoulderHalfW;
+    L1_X = L2_X;
+    R1_X = R2_X;
+    L2_Y = R2_Y = CGRectGetMinY(b) + 128;
+    L1_Y = R1_Y = CGRectGetMinY(b) + 173;
 
-    // D-pad and ABXY above them, centred between the shoulders and the sticks
-    CGFloat shouldersBottom = CGRectGetMinY(a) + a.size.height * .27 + l1.size.height / 2;
-    CGFloat sticksTop = LS_CENTER_Y - stickHalf;
-    CGFloat midY = (shouldersBottom + sticksTop) / 2;
-    D_PAD_CENTER_X = CGRectGetMinX(a) + MAX(dpadHalfW, stickHalf) + gap;
-    D_PAD_CENTER_Y = MAX(midY, shouldersBottom + dpadHalfH + gap);
-    BUTTON_CENTER_X = CGRectGetMaxX(a) - MAX(buttonsHalfW, stickHalf) - gap;
-    BUTTON_CENTER_Y = MAX(midY, shouldersBottom + buttonsHalfH + gap);
+    // D-pad and ABXY at the sides, sticks inward and lower, Select / Start under them
+    D_PAD_CENTER_X = left + dpadHalfW;
+    BUTTON_CENTER_X = right - buttonsHalfW;
+    D_PAD_CENTER_Y = BUTTON_CENTER_Y = bottom - 152;
+    LS_CENTER_X = CGRectGetMinX(b) + w * 0.28;
+    RS_CENTER_X = CGRectGetMinX(b) + w * 0.69;
+    LS_CENTER_Y = RS_CENTER_Y = bottom - 62;
+    SELECT_X = D_PAD_CENTER_X;
+    START_X = BUTTON_CENTER_X;
+    SELECT_Y = START_Y = bottom - MAX(select.size.height, start.size.height) / 2 - 16;
 
-    L1_X = L2_X = CGRectGetMinX(a) + l1.size.width / 2 + gap;
-    R1_X = R2_X = CGRectGetMaxX(a) - l1.size.width / 2 - gap;
-    L1_Y = R1_Y = CGRectGetMinY(a) + a.size.height * .27;
-    L2_Y = R2_Y = CGRectGetMinY(a) + a.size.height * .1;
-
-    // Select / Start between the sticks
-    SELECT_X = CGRectGetMidX(a) - select.size.width / 2 - 12;
-    START_X = CGRectGetMidX(a) + select.size.width / 2 + 12;
-    SELECT_Y = START_Y = CGRectGetMaxY(a) - select.size.height / 2 - gap;
+    // The camera hole sits at the top of the strip on whichever side has it (bottom of the
+    // strip when the phone is turned the other way): push anything that would cover it inward.
+    CGFloat strip = safe.left - safe.right;
+    if (fabs(strip) >= 20) {
+        BOOL onLeft = strip > 0;
+        CGPoint hole = onLeft ? CGPointMake(CGRectGetMinX(b) + 40, CGRectGetMinY(b) + 45)
+                              : CGPointMake(CGRectGetMaxX(b) - 40, CGRectGetMaxY(b) - 45);
+        float* xs[] = { &L2_X, &L1_X, &R2_X, &R1_X, &D_PAD_CENTER_X, &BUTTON_CENTER_X, &SELECT_X, &START_X };
+        CGFloat ys[] = { L2_Y, L1_Y, R2_Y, R1_Y, D_PAD_CENTER_Y, BUTTON_CENTER_Y, SELECT_Y, START_Y };
+        CGFloat halfWs[] = { shoulderHalfW, shoulderHalfW, shoulderHalfW, shoulderHalfW, dpadHalfW, buttonsHalfW,
+                             select.size.width / 2, start.size.width / 2 };
+        CGFloat halfHs[] = { l2.size.height / 2, l1.size.height / 2, l2.size.height / 2, l1.size.height / 2,
+                             dpadHalfW, buttonsHalfW, select.size.height / 2, start.size.height / 2 };
+        for (int i = 0; i < 8; i++) {
+            CGFloat x = *xs[i];
+            BOOL overlapsY = fabs(ys[i] - hole.y) < halfHs[i] + CAMERA_KEEPOUT_RADIUS;
+            BOOL overlapsX = fabs(x - hole.x) < halfWs[i] + CAMERA_KEEPOUT_RADIUS;
+            if (overlapsX && overlapsY) {
+                *xs[i] = onLeft ? hole.x + CAMERA_KEEPOUT_RADIUS + halfWs[i]
+                                : hole.x - CAMERA_KEEPOUT_RADIUS - halfWs[i];
+            }
+        }
+    }
 }
 
 - (void) setupComplexControls
