@@ -396,7 +396,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
         merged.removeAll { !newIDs.contains($0.id ?? "") }
 
         host.appList = Set(merged.map(AnyHashable.init))
-        database.updateApps(forExistingHost: host)
+        database.updateApps(forExisting: host)
         updateHostShortcuts()
     }
 
@@ -425,7 +425,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
         app.hidden.toggle()
         // Port of updateAppEntry:forHost:
         host.appList = Set(host.appList)
-        DataManager().updateApps(forExistingHost: host)
+        DataManager().updateApps(forExisting: host)
         objectWillChange.send()
     }
 
@@ -466,7 +466,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
         appManager.stopRetrieving()
 
         let config = MNBridge.streamConfig(for: app, window: window)
-        let streamVC = MNBridge.streamController(with: config) { [weak self, weak root] quitApp in
+        let streamVC = MNBridge.streamController(withConfig: config) { [weak self, weak root] quitApp in
             root?.dismiss(animated: true) {
                 guard let self else { return }
                 self.isStreaming = false
