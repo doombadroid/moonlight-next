@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <Limelight.h>
+#include <os/log.h>
 
 // The iPhone Duo hinge and fold APIs ship in the iOS 27.1 SDK
 #if !TARGET_OS_TV && defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
@@ -67,6 +68,9 @@
     BOOL _deckDismissed;   // hidden with its chevron; back on the next fold
     BOOL _deckRequested;   // opened from the stream menu without a fold
     BOOL _wasTablePose;
+    NSInteger _hingeStatus;     // UIHingeStatus; 0 = unknown
+    CGFloat _hingeAngle;        // radians
+    NSString *_lastDuoLog;
 #endif
 }
 
@@ -338,6 +342,13 @@
 
 // MARK: iPhone Duo hinge + tabletop input deck
 
+static os_log_t DuoLog(void) {
+    static os_log_t log;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ log = os_log_create("com.doombadroid.moonlightnext", "duo"); });
+    return log;
+}
+
 - (void)setupHingeObserver {
     // Folding or unfolding changes the size class, and with it the orientation mask above
     [self registerForTraitChanges:@[UITraitHorizontalSizeClass.class]
@@ -346,8 +357,16 @@
     if (@available(iOS 27.1, *)) {
         __weak StreamFrameViewController* weakSelf = self;
         UIHingeInteraction* hinge = [[UIHingeInteraction alloc] initWithUpdateHandler:^(UIHingeInteraction* interaction, UIHingeInteractionUpdate* update) {
-            // The fold region follows the hinge; re-run layout once it has settled
-            dispatch_async(dispatch_get_main_queue(), ^{
+            StreamFrameViewController* strongSelf = weakSelf;
+            if (strongSelf == nil) {
+                return;
+            }
+            strongSelf->_hingeStatus = update.hinge != nil ? update.hinge.status : 0;
+            strongSelf->_hingeAngle = update.hinge != nil ? update.hinge.angle : 0;
+            os_log(DuoLog(), "hinge update: status=%ld angle=%.0f deg", (long)strongSelf->_hingeStatus, strongSelf->_hingeAngle * 180 / M_PI);
+            // The fold region follows the hinge: lay out now, and again once it has settled
+            [strongSelf.view setNeedsLayout];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 [weakSelf.view setNeedsLayout];
             });
         }];
@@ -356,21 +375,43 @@
 #endif
 }
 
-// The fold while the device stands half-open on a table (a horizontal division region),
-// in this view's coordinates, or CGRectNull.
+// The fold while the device stands half-open like a laptop (inner screen up, its lower half
+// on the table), in this view's coordinates, or CGRectNull. Prefers the system's division
+// region; if that isn't reported, a partly open hinge on a portrait-shaped screen means the
+// same pose, with the fold across the middle.
 - (CGRect)tableFold {
+    CGRect bounds = self.view.bounds;
+    CGRect fold = CGRectNull;
+    NSMutableString* diag = [NSMutableString stringWithFormat:@"view=%.0fx%.0f hinge=%ld/%.0fdeg regions=[",
+                             bounds.size.width, bounds.size.height, (long)_hingeStatus, _hingeAngle * 180 / M_PI];
 #ifdef MN_DUO_APIS
     if (@available(iOS 27.1, *)) {
-        NSArray<UIViewReservedRegion*>* regions = [self.view reservedRegionsOfKind:[UIViewReservedRegionKind divisionRegionKind]];
+        NSArray<UIViewReservedRegion*>* regions = [self.view reservedRegionsOfKind:[UIViewReservedRegionKind divisionRegionKind]
+                                                                           options:UIViewReservedRegionQueryOptionsIncludeInactive];
         for (UIViewReservedRegion* region in regions) {
             CGRect frame = region.frame;
-            if (region.isActive && frame.size.width > frame.size.height) {
-                return frame;
+            [diag appendFormat:@" %@%@", NSStringFromCGRect(frame), region.isActive ? @"" : @"(inactive)"];
+            if (CGRectIsNull(fold) && region.isActive && frame.size.width > frame.size.height) {
+                fold = frame;
             }
+        }
+        if (CGRectIsNull(fold) && _hingeStatus == UIHingeStatusPartiallyOpen &&
+            bounds.size.height > bounds.size.width) {
+            CGFloat thickness = 40;
+            fold = CGRectMake(0, floor(bounds.size.height / 2 - thickness / 2), bounds.size.width, thickness);
+            [diag appendString:@" ] fallback"];
+        }
+        else {
+            [diag appendString:@" ]"];
         }
     }
 #endif
-    return CGRectNull;
+    [diag appendFormat:@" -> %@", CGRectIsNull(fold) ? @"no table pose" : NSStringFromCGRect(fold)];
+    if (![diag isEqualToString:_lastDuoLog]) {
+        _lastDuoLog = diag;
+        os_log(DuoLog(), "%{public}@", diag);
+    }
+    return fold;
 }
 
 - (CGFloat)foldThickness {
