@@ -20,6 +20,9 @@
 @interface StreamFrameViewController : UIViewController <ConnectionCallbacks, ControllerSupportDelegate, UserInteractionDelegate, UIScrollViewDelegate>
 #endif
 @property (nonatomic) StreamConfiguration* streamConfig;
+// Set when presented by the SwiftUI launcher. Called once when the stream ends instead of
+// popping the navigation stack; quitApp is YES if the user asked to quit the app on the host.
+@property (nonatomic, copy) void (^onExit)(BOOL quitApp);
 
 -(void)updatePreferredDisplayMode:(BOOL)streamActive;
 

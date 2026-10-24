@@ -47,9 +47,12 @@
     UIScrollView *_scrollView;
     BOOL _userIsInteracting;
     CGSize _keyboardSize;
-    
+    BOOL _tornDown;
+    BOOL _quitOnExit;
+
 #if !TARGET_OS_TV
     UIScreenEdgePanGestureRecognizer *_exitSwipeRecognizer;
+    UIButton *_menuButton;
 #endif
 }
 
@@ -80,7 +83,12 @@
     [super viewDidLoad];
     
     [self.navigationController setNavigationBarHidden:YES animated:YES];
-    
+
+    // Created in code (not from a storyboard) when presented by the SwiftUI launcher
+    if (self.view.backgroundColor == nil) {
+        self.view.backgroundColor = [UIColor blackColor];
+    }
+
     [UIApplication sharedApplication].idleTimerDisabled = YES;
     
     _settings = [[[DataManager alloc] init] getSettings];
@@ -143,7 +151,7 @@
 #if TARGET_OS_TV
     [_tipLabel setText:@"Tip: Tap the Play/Pause button on the Apple TV Remote to disconnect from your PC"];
 #else
-    [_tipLabel setText:@"Tip: Swipe from the left edge to disconnect from your PC"];
+    [_tipLabel setText:@"Tip: Swipe from the left edge or use the ••• menu to disconnect"];
 #endif
     
     [_tipLabel sizeToFit];
@@ -209,7 +217,115 @@
     [self.view addSubview:_stageLabel];
     [self.view addSubview:_spinner];
     [self.view addSubview:_tipLabel];
+
+#if !TARGET_OS_TV
+    [self setupMenuButton];
+#endif
 }
+
+// Re-fit everything to the current bounds. The stream can be resized while running
+// (iPhone Duo fold/unfold), so nothing here may assume the frame from viewDidLoad.
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+
+    CGRect bounds = self.view.bounds;
+    if (_scrollView != nil) {
+        _scrollView.frame = bounds;
+        if (_scrollView.zoomScale == 1.0f) {
+            _streamView.frame = bounds;
+            _scrollView.contentSize = bounds.size;
+        }
+    }
+    else {
+        _streamView.frame = bounds;
+    }
+
+    _stageLabel.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+    _spinner.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds) - _stageLabel.frame.size.height - _spinner.frame.size.height);
+    _tipLabel.center = CGPointMake(CGRectGetMidX(bounds), bounds.size.height * 0.9);
+
+    if (_overlayView != nil && !_overlayView.hidden) {
+        [self positionOverlay];
+    }
+
+#if !TARGET_OS_TV
+    UIEdgeInsets safe = self.view.safeAreaInsets;
+    _menuButton.frame = CGRectMake(bounds.size.width - safe.right - 16 - 44, safe.top + 10, 44, 44);
+    [self.view bringSubviewToFront:_menuButton];
+#endif
+}
+
+#if !TARGET_OS_TV
+- (void)setupMenuButton {
+    _menuButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIImageSymbolConfiguration* symbolConfig = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightSemibold];
+    [_menuButton setImage:[UIImage systemImageNamed:@"ellipsis" withConfiguration:symbolConfig] forState:UIControlStateNormal];
+    _menuButton.tintColor = [UIColor whiteColor];
+    _menuButton.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    _menuButton.layer.cornerRadius = 22;
+    _menuButton.layer.borderWidth = 1;
+    _menuButton.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.25].CGColor;
+    _menuButton.accessibilityLabel = @"Stream menu";
+    _menuButton.showsMenuAsPrimaryAction = YES;
+
+    __weak StreamFrameViewController* weakSelf = self;
+    _menuButton.menu = [UIMenu menuWithChildren:@[[UIDeferredMenuElement elementWithUncachedProvider:^(void (^completion)(NSArray<UIMenuElement*>*)) {
+        StreamFrameViewController* strongSelf = weakSelf;
+        if (strongSelf == nil) {
+            completion(@[]);
+            return;
+        }
+        BOOL statsShown = strongSelf->_statsUpdateTimer != nil;
+        UIAction* quitAction = [UIAction actionWithTitle:@"Quit App and Disconnect"
+                                                   image:[UIImage systemImageNamed:@"power"]
+                                              identifier:nil
+                                                 handler:^(UIAction* action) {
+            StreamFrameViewController* s = weakSelf;
+            if (s != nil) {
+                s->_quitOnExit = YES;
+                [s returnToMainFrame];
+            }
+        }];
+        quitAction.attributes = UIMenuElementAttributesDestructive;
+        completion(@[
+            [UIAction actionWithTitle:statsShown ? @"Hide Stats" : @"Show Stats"
+                                image:[UIImage systemImageNamed:@"chart.bar.xaxis"]
+                           identifier:nil
+                              handler:^(UIAction* action) { [weakSelf toggleStatsOverlay]; }],
+            [UIAction actionWithTitle:@"Disconnect"
+                                image:[UIImage systemImageNamed:@"xmark"]
+                           identifier:nil
+                              handler:^(UIAction* action) { [weakSelf returnToMainFrame]; }],
+            quitAction,
+        ]);
+    }]]];
+
+    [self.view addSubview:_menuButton];
+}
+
+- (void)toggleStatsOverlay {
+    if (_statsUpdateTimer != nil) {
+        [_statsUpdateTimer invalidate];
+        _statsUpdateTimer = nil;
+        [self updateOverlayText:nil];
+    }
+    else {
+        _statsUpdateTimer = [NSTimer scheduledTimerWithTimeInterval:1.0f
+                                                             target:self
+                                                           selector:@selector(updateStatsOverlay)
+                                                           userInfo:nil
+                                                            repeats:YES];
+    }
+}
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    // Stream in landscape on phone-sized displays. The iPhone Duo inner display ignores this.
+    if (self.traitCollection.userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
+        return UIInterfaceOrientationMaskLandscape;
+    }
+    return UIInterfaceOrientationMaskAll;
+}
+#endif
 
 - (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView {
     return _streamView;
@@ -218,15 +334,24 @@
 - (void)willMoveToParentViewController:(UIViewController *)parent {
     // Only cleanup when we're being destroyed
     if (parent == nil) {
-        [_controllerSupport cleanup];
-        [UIApplication sharedApplication].idleTimerDisabled = NO;
-        [_streamMan stopStream];
-        if (_inactivityTimer != nil) {
-            [_inactivityTimer invalidate];
-            _inactivityTimer = nil;
-        }
-        [[NSNotificationCenter defaultCenter] removeObserver:self];
+        [self teardownStream];
     }
+}
+
+- (void)teardownStream {
+    if (_tornDown) {
+        return;
+    }
+    _tornDown = YES;
+
+    [_controllerSupport cleanup];
+    [UIApplication sharedApplication].idleTimerDisabled = NO;
+    [_streamMan stopStream];
+    if (_inactivityTimer != nil) {
+        [_inactivityTimer invalidate];
+        _inactivityTimer = nil;
+    }
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 #if 0
@@ -276,17 +401,23 @@
             [_overlayView setTextAlignment:NSTextAlignmentCenter];
         }
         
+#if TARGET_OS_TV
         [_overlayView setTextColor:[UIColor lightGrayColor]];
         [_overlayView setBackgroundColor:[UIColor blackColor]];
-#if TARGET_OS_TV
         [_overlayView setFont:[UIFont systemFontOfSize:24]];
-#else
-        [_overlayView setFont:[UIFont systemFontOfSize:12]];
-#endif
         [_overlayView setAlpha:0.5];
+#else
+        // Eclipse theme: dark translucent pill, monospaced stats
+        [_overlayView setTextColor:[UIColor colorWithRed:0xD7/255.0 green:0xD7/255.0 blue:0xDC/255.0 alpha:1]];
+        [_overlayView setBackgroundColor:[UIColor colorWithWhite:0 alpha:0.72]];
+        [_overlayView setFont:[UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular]];
+        [_overlayView setTextContainerInset:UIEdgeInsetsMake(6, 10, 6, 10)];
+        _overlayView.layer.cornerRadius = 12;
+        _overlayView.layer.cornerCurve = kCACornerCurveContinuous;
+#endif
         [self.view addSubview:_overlayView];
     }
-    
+
     if (text != nil) {
         // We set our bounds to the maximum width in order to work around a bug where
         // sizeToFit interacts badly with the UITextView's line breaks, causing the
@@ -297,12 +428,25 @@
                                            _overlayView.frame.size.height)];
         [_overlayView setText:text];
         [_overlayView sizeToFit];
-        [_overlayView setCenter:CGPointMake(self.view.frame.size.width / 2, _overlayView.frame.size.height / 2)];
+        [self positionOverlay];
         [_overlayView setHidden:NO];
     }
     else {
         [_overlayView setHidden:YES];
     }
+}
+
+- (void)positionOverlay {
+#if TARGET_OS_TV
+    [_overlayView setCenter:CGPointMake(self.view.frame.size.width / 2, _overlayView.frame.size.height / 2)];
+#else
+    // Stats sit top-left; connection warnings are centered at the top
+    UIEdgeInsets safe = self.view.safeAreaInsets;
+    CGRect frame = _overlayView.frame;
+    frame.origin.y = safe.top + 10;
+    frame.origin.x = _statsUpdateTimer != nil ? safe.left + 16 : (self.view.bounds.size.width - frame.size.width) / 2;
+    _overlayView.frame = frame;
+#endif
 }
 
 - (void) returnToMainFrame {
@@ -311,7 +455,16 @@
     
     [_statsUpdateTimer invalidate];
     _statsUpdateTimer = nil;
-    
+
+    if (self.onExit != nil) {
+        // Presented by the SwiftUI launcher: no navigation stack to pop
+        void (^onExit)(BOOL) = self.onExit;
+        self.onExit = nil;
+        [self teardownStream];
+        onExit(_quitOnExit);
+        return;
+    }
+
     [self.navigationController popToRootViewControllerAnimated:YES];
 }
 

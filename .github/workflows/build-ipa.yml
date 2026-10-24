@@ -1,0 +1,196 @@
+name: Build IPA
+
+# Unsigned Moonlight Next IPA built with the iOS 27.1 SDK (the first SDK that lays apps out
+# edge to edge on iPhone Duo), published as a release plus a SideStore source feed.
+# The IPA is signed with your own Apple ID when it's installed (SideStore / AltStore).
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a release and update the SideStore feed
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # releases + the SideStore feed commit
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XCODE: '27.1'
+
+jobs:
+  ipa:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: '${{ env.XCODE }}' }
+
+      - name: Archive without signing
+        run: |
+          xcodebuild -version
+          xcodebuild -project Moonlight.xcodeproj -scheme Moonlight -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Moonlight.xcarchive" \
+            archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} MARKETING_VERSION=1.0.${{ github.run_number }} \
+            | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E '^\*\*|error:|warning: .*(deprecated|is ambiguous)' || true
+          test -d "$RUNNER_TEMP/Moonlight.xcarchive/Products/Applications/Moonlight.app"
+
+      - name: Package and check the IPA
+        run: |
+          cd "$RUNNER_TEMP"
+          mkdir Payload
+          cp -R Moonlight.xcarchive/Products/Applications/Moonlight.app Payload/
+          plist=Payload/Moonlight.app/Info.plist
+          for key in CFBundleIdentifier CFBundleDisplayName CFBundleShortVersionString MinimumOSVersion; do
+            echo "$key = $(/usr/libexec/PlistBuddy -c "Print :$key" $plist)"
+          done
+          # iOS 27 SDK apps without a scene manifest die at launch (TN3187)
+          /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' $plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' $plist)" = com.doombadroid.moonlightnext
+          sdk=$(xcrun vtool -show-build Payload/Moonlight.app/Moonlight | awk '/sdk/ {print $2; exit}')
+          echo "Built against iOS SDK $sdk"
+          echo "BUILD_TOOLCHAIN=$(xcodebuild -version | tr '\n' ' ' | sed 's/ *$//'), iOS SDK $sdk" >> "$GITHUB_ENV"
+          echo "MIN_IOS=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' $plist)" >> "$GITHUB_ENV"
+          lipo -archs Payload/Moonlight.app/Moonlight
+          zip -qry MoonlightNext-unsigned.ipa Payload
+          ls -la MoonlightNext-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MoonlightNext-unsigned-ipa
+          path: ${{ runner.temp }}/MoonlightNext-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Publish as a release
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse --short HEAD)
+          gh release create "build-${{ github.run_number }}" "$RUNNER_TEMP/MoonlightNext-unsigned.ipa" \
+            --title "Moonlight Next build ${{ github.run_number }} ($sha)" \
+            --notes "Unsigned IPA at $sha ($BUILD_TOOLCHAIN). Sign it with your own Apple ID: add the SideStore source https://raw.githubusercontent.com/${{ github.repository }}/master/sidestore-source.json or open the IPA in SideStore. GPL-3.0, fork of moonlight-stream/moonlight-ios."
+
+      - name: Update the SideStore source feed
+        if: github.event_name == 'push' || inputs.publish
+        run: |
+          git fetch -q origin master && git checkout -q -B master origin/master
+          python3 - <<'PY'
+          import json, os, datetime
+          run = "${{ github.run_number }}"
+          repo = "${{ github.repository }}"
+          path = "sidestore-source.json"
+          size = os.path.getsize(os.path.join(os.environ["RUNNER_TEMP"], "MoonlightNext-unsigned.ipa"))
+          try:
+              source = json.load(open(path))
+          except FileNotFoundError:
+              source = {
+                  "name": "Moonlight Next",
+                  "identifier": "io.github.doombadroid.moonlight-next",
+                  "subtitle": "Moonlight game streaming, redesigned for iPhone Duo",
+                  "apps": [{
+                      "name": "Moonlight Next",
+                      "bundleIdentifier": "com.doombadroid.moonlightnext",
+                      "developerName": "doombadroid (fork of moonlight-stream/moonlight-ios)",
+                      "subtitle": "Stream games from your PC",
+                      "localizedDescription": "Fork of Moonlight for iOS (GPL-3.0) with a dark SwiftUI launcher and iPhone Duo fold/unfold support. Streams from Sunshine or GeForce Experience.",
+                      "iconURL": f"https://raw.githubusercontent.com/{repo}/master/Limelight/Images.xcassets/AppIcon.appiconset/AppIcon-1024.png",
+                      "tintColor": "8ab4ff",
+                      "versions": [],
+                      "appPermissions": {"entitlements": [], "privacy": {}},
+                  }],
+                  "news": [],
+              }
+          versions = source["apps"][0]["versions"]
+          versions.insert(0, {
+              "version": f"1.0.{run}",
+              "buildVersion": run,
+              "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "localizedDescription": os.environ["BUILD_TOOLCHAIN"],
+              "downloadURL": f"https://github.com/{repo}/releases/download/build-{run}/MoonlightNext-unsigned.ipa",
+              "size": size,
+              "minOSVersion": os.environ["MIN_IOS"],
+          })
+          del versions[5:]
+          json.dump(source, open(path, "w"), indent=2)
+          open(path, "a").write("\n")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sidestore-source.json
+          git commit -qm "SideStore feed: build ${{ github.run_number }} [skip ci]"
+          git push -q origin master
+
+      - name: Keep the full build log when something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+
+  # Launch check on the iPhone Duo simulator: proves the app survives launch under the
+  # iOS 27.1 SDK (no TN3187 scene assertion) and captures the launcher for a look.
+  duo-simulator:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: '${{ env.XCODE }}' }
+
+      - name: Build for the simulator
+        run: |
+          xcodebuild -project Moonlight.xcodeproj -scheme Moonlight -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" build CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/sim-build.log" | grep -E '^\*\*|error:' || true
+          test -d "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/Moonlight.app"
+
+      - name: Boot an iPhone Duo and launch
+        run: |
+          xcrun simctl list devicetypes
+          xcrun simctl list runtimes
+          xcrun simctl help 2>&1 | grep -iE 'fold|posture|hinge' || echo "(no fold subcommand in simctl help)"
+          type=$(xcrun simctl list devicetypes -j | python3 -c "import json,sys; t=[d['identifier'] for d in json.load(sys.stdin)['devicetypes'] if 'Duo' in d['name']]; print(t[0] if t else '')")
+          runtime=$(xcrun simctl list runtimes -j | python3 -c "import json,sys; r=[x['identifier'] for x in json.load(sys.stdin)['runtimes'] if x['isAvailable'] and x['platform']=='iOS']; print(r[-1] if r else '')")
+          if [ -z "$runtime" ]; then
+            xcodebuild -downloadPlatform iOS
+            runtime=$(xcrun simctl list runtimes -j | python3 -c "import json,sys; r=[x['identifier'] for x in json.load(sys.stdin)['runtimes'] if x['isAvailable'] and x['platform']=='iOS']; print(r[-1])")
+          fi
+          [ -n "$type" ] || { echo "::warning::no iPhone Duo simulator device type in this Xcode; using an iPhone"; type=$(xcrun simctl list devicetypes -j | python3 -c "import json,sys; print([d['identifier'] for d in json.load(sys.stdin)['devicetypes'] if 'iPhone' in d['name']][-1])"); }
+          echo "device type $type, runtime $runtime"
+          udid=$(xcrun simctl create duo "$type" "$runtime")
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/Moonlight.app"
+          xcrun simctl launch "$udid" com.doombadroid.moonlightnext
+          sleep 10
+          mkdir -p "$RUNNER_TEMP/shots"
+          xcrun simctl io "$udid" screenshot "$RUNNER_TEMP/shots/launcher.png"
+          xcrun simctl spawn "$udid" log show --last 2m --predicate 'process == "Moonlight"' --style compact > "$RUNNER_TEMP/shots/app.log" || true
+          # Still running 10 s after launch?
+          pgrep -fl 'Moonlight.app/Moonlight' || { echo "::error::app is not running 10 s after launch"; tail -50 "$RUNNER_TEMP/shots/app.log"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: duo-simulator
+          path: |
+            ${{ runner.temp }}/shots
+            ${{ runner.temp }}/sim-build.log
+          if-no-files-found: ignore

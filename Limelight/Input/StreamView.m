@@ -6,6 +6,8 @@
 //  Copyright (c) 2014 Moonlight Stream. All rights reserved.
 //
 
+@import AVFoundation;
+
 #import "StreamView.h"
 #include <Limelight.h>
 #import "DataManager.h"
@@ -159,6 +161,27 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
         // User is still touching the screen. Restart the timer.
         [self startInteractionTimer];
     }
+}
+
+- (void) layoutSubviews {
+    [super layoutSubviews];
+
+    // Keep the video aspect-fit to our current bounds. The display layer is sized once when it's
+    // created, so without this a window resize (iPhone Duo fold/unfold) leaves it stale.
+    for (CALayer* layer in self.layer.sublayers) {
+        if ([layer isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
+            CGSize videoSize = [self getVideoAreaSize];
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            layer.bounds = CGRectMake(0, 0, videoSize.width, videoSize.height);
+            layer.position = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+            [CATransaction commit];
+        }
+    }
+
+#if !TARGET_OS_TV
+    [onScreenControls relayout];
+#endif
 }
 
 - (void) showOnScreenControls {

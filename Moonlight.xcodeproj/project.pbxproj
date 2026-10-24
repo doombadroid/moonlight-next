@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -322,6 +322,14 @@
 		FBDE86E519F82297001C18A8 /* UIAppView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = UIAppView.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		4D4E00000000000000000001 /* MoonlightNext */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MoonlightNext;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		FB1A67502132419700507771 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -397,6 +405,7 @@
 		FB290CE519B2C406004C83CF = {
 			isa = PBXGroup;
 			children = (
+				4D4E00000000000000000001 /* MoonlightNext */,
 				9896219423D15C2900211983 /* X1Kit */,
 				98AB2E7F1CAD46830089BB98 /* moonlight-common.xcodeproj */,
 				FB290CF919B2C406004C83CF /* Moonlight */,
@@ -722,6 +731,9 @@
 			dependencies = (
 				98AB2E861CAD468B0089BB98 /* PBXTargetDependency */,
 			);
+			fileSystemSynchronizedGroups = (
+				4D4E00000000000000000001 /* MoonlightNext */,
+			);
 			name = Moonlight;
 			packageProductDependencies = (
 				F74BEF9B2C1A705600224667 /* OpenSSL */,
@@ -757,7 +769,7 @@
 				};
 			};
 			buildConfigurationList = FB290CE919B2C406004C83CF /* Build configuration list for PBXProject "Moonlight" */;
-			compatibilityVersion = "Xcode 8.0";
+			preferredProjectObjectVersion = 77;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -1218,7 +1230,7 @@
 				);
 				INFOPLIST_FILE = "Limelight/Limelight-Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
-				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1235,12 +1247,12 @@
 					"$(PROJECT_DIR)/libs/SDL2/lib/iOS-Sim",
 					"$(PROJECT_DIR)/libs/FFmpeg/lib/iOS-Sim",
 				);
-				MARKETING_VERSION = 9.0.2;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.moonlight-stream.Moonlight";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.doombadroid.moonlightnext;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE = "";
 				SKIP_INSTALL = NO;
-				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Input/Moonlight-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "MoonlightNext/MoonlightNext-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Moonlight-Swift.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_SWIFT3_OBJC_INFERENCE = Default;
@@ -1268,7 +1280,7 @@
 				);
 				INFOPLIST_FILE = "Limelight/Limelight-Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
-				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1285,13 +1297,13 @@
 					"$(PROJECT_DIR)/libs/SDL2/lib/iOS-Sim",
 					"$(PROJECT_DIR)/libs/FFmpeg/lib/iOS-Sim",
 				);
-				MARKETING_VERSION = 9.0.2;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.moonlight-stream.Moonlight";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.doombadroid.moonlightnext;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE = "";
 				SKIP_INSTALL = NO;
 				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Input/Moonlight-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "MoonlightNext/MoonlightNext-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Moonlight-Swift.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_SWIFT3_OBJC_INFERENCE = Default;

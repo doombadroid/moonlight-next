@@ -61,6 +61,7 @@
     
     BOOL _iPad;
     CGRect _controlArea;
+    CGRect _usableArea;
     UIView* _view;
     OnScreenControlsLevel _level;
     BOOL _visible;
@@ -120,20 +121,8 @@ static float L3_Y;
     _deadTouches = [[NSMutableArray alloc] init];
     _swapABXY = streamConfig.swapABXYButtons;
     
-    _iPad = ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad);
-    _controlArea = CGRectMake(0, 0, _view.frame.size.width, _view.frame.size.height);
-    if (_iPad)
-    {
-        // Cut down the control area on an iPad so the controls are more reachable
-        _controlArea.size.height = _view.frame.size.height / 2.0;
-        _controlArea.origin.y = _view.frame.size.height - _controlArea.size.height;
-    }
-    else
-    {
-        _controlArea.origin.x = _controlArea.size.width * EDGE_WIDTH;
-        _controlArea.size.width -= _controlArea.origin.x * 2;
-    }
-    
+    [self relayout];
+
     _aButton = [CALayer layer];
     _bButton = [CALayer layer];
     _xButton = [CALayer layer];
@@ -156,6 +145,39 @@ static float L3_Y;
     _rightStick = [CALayer layer];
     
     return self;
+}
+
+// Recompute the control area from the view's current bounds and per-edge safe area.
+// Called again whenever the view resizes (e.g. folding or unfolding an iPhone Duo mid-stream).
+- (void) relayout {
+    UITraitCollection* traits = _view.traitCollection;
+    BOOL roomy = traits.horizontalSizeClass == UIUserInterfaceSizeClassRegular &&
+                 traits.verticalSizeClass == UIUserInterfaceSizeClassRegular;
+    CGRect area = UIEdgeInsetsInsetRect(_view.bounds, _view.safeAreaInsets);
+
+    if (roomy == _iPad && CGRectEqualToRect(area, _usableArea)) {
+        return;
+    }
+    _iPad = roomy;
+    _usableArea = area;
+
+    if (_iPad)
+    {
+        // Cut down the control area on large displays so the controls are more reachable
+        area.origin.y += area.size.height / 2.0;
+        area.size.height /= 2.0;
+    }
+    else
+    {
+        CGFloat edge = area.size.width * EDGE_WIDTH;
+        area.origin.x += edge;
+        area.size.width -= edge * 2;
+    }
+    _controlArea = area;
+
+    if (_visible) {
+        [self updateControls];
+    }
 }
 
 - (void) show {
