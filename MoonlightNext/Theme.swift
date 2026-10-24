@@ -57,21 +57,3 @@ struct PillButtonStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
-
-/// 44pt circular hairline icon button.
-struct CircleIconButton: View {
-    let systemName: String
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 44, height: 44)
-                .overlay(Circle().strokeBorder(Theme.lineStrong))
-        }
-        .accessibilityLabel(label)
-    }
-}

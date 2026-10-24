@@ -32,6 +32,8 @@
 
 #if !TARGET_OS_TV
 - (void) updateCursorLocation:(CGPoint)location isMouse:(BOOL)isMouse;
+// Hides the on-screen controls while the tabletop input deck is up, then restores their level.
+- (void) setOnScreenControlsSuppressed:(BOOL)suppressed;
 #endif
 
 @end

@@ -25,3 +25,4 @@
 #import "IdManager.h"
 #import "Utils.h"
 #import "MNBridge.h"
+#import "MNInput.h"

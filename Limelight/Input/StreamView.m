@@ -21,6 +21,8 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 
 @implementation StreamView {
     OnScreenControls* onScreenControls;
+    BOOL oscSuppressed;
+    OnScreenControlsLevel levelBeforeSuppression;
     
     KeyboardInputField* keyInputField;
     BOOL isInputingText;
@@ -189,6 +191,22 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     [onScreenControls show];
 #endif
 }
+
+#if !TARGET_OS_TV
+- (void) setOnScreenControlsSuppressed:(BOOL)suppressed {
+    if (onScreenControls == nil || suppressed == oscSuppressed) {
+        return;
+    }
+    oscSuppressed = suppressed;
+    if (suppressed) {
+        levelBeforeSuppression = [onScreenControls getLevel];
+        [onScreenControls setLevel:OnScreenControlsLevelOff];
+    }
+    else {
+        [onScreenControls setLevel:levelBeforeSuppression];
+    }
+}
+#endif
 
 - (OnScreenControlsLevel) getCurrentOscState {
     if (onScreenControls == nil) {

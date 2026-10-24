@@ -2,9 +2,12 @@
 //  LauncherView.swift
 //  Moonlight Next
 //
-//  Hosts + library. Unfolded (regular width): sidebar of computers beside the library.
-//  Folded (compact width): one column with a computer switcher at the top.
-//  Layout follows size class and available width, never the device model.
+//  Computers and their apps, in a NavigationSplitView: a sidebar of computers beside the
+//  selected computer's apps on a wide window, a push from one to the other when folded.
+//  The actions are real toolbar items, so on an iPhone Duo the system lays them out in its
+//  vertical bar beside the status bar (folded, or unfolded in landscape) and keeps the split
+//  clear of the fold when the device is held like a book. Layout follows size class and
+//  available width, never the device model.
 //
 //  `State` alone is ambiguous here (Moonlight's host State enum), so SwiftUI's is spelled out.
 //
@@ -13,28 +16,44 @@ import SwiftUI
 
 struct LauncherView: View {
     @EnvironmentObject private var model: LauncherModel
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @SwiftUI.State private var showSettings = false
     @SwiftUI.State private var showAddHost = false
     @SwiftUI.State private var newHostAddress = ""
 
-    var body: some View {
-        GeometryReader { geo in
-            Group {
-                if horizontalSizeClass == .regular && geo.size.width >= 600 {
-                    HStack(spacing: 0) {
-                        Sidebar(showSettings: $showSettings, showAddHost: $showAddHost)
-                            .frame(width: 268)
-                        Rectangle().fill(Theme.line).frame(width: 1)
-                        detail(compact: false)
-                    }
+    /// The sidebar selection is the model's selected computer.
+    private var hostSelection: Binding<String?> {
+        Binding(
+            get: { model.selectedHost?.uuid },
+            set: { uuid in
+                if let uuid, let host = model.hosts.first(where: { $0.uuid == uuid }) {
+                    if host !== model.selectedHost { model.select(host, userInitiated: true) }
                 } else {
-                    detail(compact: true)
+                    model.deselectHost()
                 }
+            })
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            ComputersList(selection: hostSelection)
+                .navigationTitle("Computers")
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        Button { showAddHost = true } label: { Label("Add computer", systemImage: "plus") }
+                        Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+                    }
+                }
+        } detail: {
+            if let host = model.selectedHost {
+                HostDetailView(host: host)
+            } else {
+                EmptyState(icon: "desktopcomputer",
+                           title: model.hosts.isEmpty ? "Searching for PCs on your network…" : "Choose a computer",
+                           message: "Moonlight Next finds PCs running Sunshine or GeForce Experience on your network.")
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Theme.ground.ignoresSafeArea())
+        .navigationSplitViewStyle(.balanced)
+        .tint(Theme.accent)
         .foregroundStyle(Theme.text)
         .overlay { BusyOverlay(message: model.busyMessage) }
         .sheet(isPresented: $showSettings) { SettingsView() }
@@ -72,19 +91,6 @@ struct LauncherView: View {
             }
         }
     }
-
-    @ViewBuilder
-    private func detail(compact: Bool) -> some View {
-        if let host = model.selectedHost {
-            HostDetailView(host: host, compact: compact, showSettings: $showSettings, showAddHost: $showAddHost)
-        } else if compact {
-            CompactHostList(showSettings: $showSettings, showAddHost: $showAddHost)
-        } else {
-            EmptyState(icon: "desktopcomputer",
-                       title: model.hosts.isEmpty ? "Searching for PCs on your network…" : "Choose a computer",
-                       message: "Moonlight Next finds PCs running Sunshine or GeForce Experience on your network.")
-        }
-    }
 }
 
 // MARK: - Actions for a tap while another app is running (port of appLongClicked)
@@ -107,102 +113,58 @@ private struct RunningAppActions: View {
     }
 }
 
-// MARK: - Sidebar (unfolded)
+// MARK: - Computers (sidebar unfolded, root screen folded)
 
-private struct Sidebar: View {
+private struct ComputersList: View {
     @EnvironmentObject private var model: LauncherModel
-    @Binding var showSettings: Bool
-    @Binding var showAddHost: Bool
+    @Binding var selection: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Image(systemName: "moon")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(Theme.accent)
-                Text("Moonlight Next")
-                    .font(.system(size: 17, weight: .semibold))
+        List(selection: $selection) {
+            if model.hosts.isEmpty {
+                Text("Searching for PCs on your network…")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.muted)
+                    .listRowBackground(Color.clear)
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 18)
-
-            Theme.label("Computers")
-                .padding(.horizontal, 8)
-                .padding(.bottom, 6)
-
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(model.hosts, id: \.uuid) { host in
-                        HostRow(host: host, selected: host === model.selectedHost) {
-                            model.select(host, userInitiated: true)
-                        }
-                    }
-                    if model.hosts.isEmpty {
-                        Text("Searching…")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10)
-                    }
-                }
+            ForEach(model.hosts, id: \.uuid) { host in
+                HostRow(host: host, selected: host === model.selectedHost)
+                    .tag(host.uuid as String?)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 3, leading: 10, bottom: 3, trailing: 10))
             }
-
-            SidebarButton(icon: "plus", title: "Add computer") { showAddHost = true }
-            SidebarButton(icon: "gearshape", title: "Settings") { showSettings = true }
         }
-        .padding(.top, 26)
-        .padding(.horizontal, 18)
-        .padding(.bottom, 20)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Theme.ground)
     }
 }
 
-private struct SidebarButton: View {
-    let icon: String
-    let title: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 16)).frame(width: 20)
-                Text(title).font(.system(size: 15))
-                Spacer()
-            }
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 10)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-    }
-}
-
+/// A computer in the list. Taps go to the list's selection, not to the row.
 struct HostRow: View {
     let host: TemporaryHost
     var selected = false
-    let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 17))
-                    .foregroundStyle(Color(hex: 0xA3A3AA))
-                    .frame(width: 22)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(host.name).font(.system(size: 15, weight: .medium))
-                    Text(host.statusText).font(.system(size: 12)).foregroundStyle(Theme.muted)
-                }
-                Spacer(minLength: 4)
-                Circle().fill(host.state == .online ? Theme.online : Theme.offline).frame(width: 8, height: 8)
+        HStack(spacing: 12) {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 17))
+                .foregroundStyle(Color(hex: 0xA3A3AA))
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host.name).font(.system(size: 15, weight: .medium))
+                Text(host.statusText).font(.system(size: 12)).foregroundStyle(Theme.muted)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(minHeight: 56)
-            .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.raised : Color.clear))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? Color(hex: 0x2A2A32) : Color.clear))
-            .contentShape(Rectangle())
+            Spacer(minLength: 4)
+            Circle().fill(host.state == .online ? Theme.online : Theme.offline).frame(width: 8, height: 8)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minHeight: 56)
+        .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.raised : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? Color(hex: 0x2A2A32) : Color.clear))
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -221,60 +183,19 @@ extension TemporaryHost {
     }
 }
 
-// MARK: - Host list (folded, nothing selected)
-
-private struct CompactHostList: View {
-    @EnvironmentObject private var model: LauncherModel
-    @Binding var showSettings: Bool
-    @Binding var showAddHost: Bool
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    HStack(spacing: 10) {
-                        Image(systemName: "moon").foregroundStyle(Theme.accent)
-                        Text("Moonlight Next").font(.system(size: 20, weight: .semibold))
-                    }
-                    Spacer()
-                    CircleIconButton(systemName: "plus", label: "Add computer") { showAddHost = true }
-                    CircleIconButton(systemName: "gearshape", label: "Settings") { showSettings = true }
-                }
-                Theme.label("Computers")
-                if !model.hosts.isEmpty {
-                    VStack(spacing: 6) {
-                        ForEach(model.hosts, id: \.uuid) { host in
-                            HostRow(host: host) { model.select(host, userInitiated: true) }
-                        }
-                    }
-                    .padding(4)
-                    .background(RoundedRectangle(cornerRadius: Theme.cardRadius).fill(Theme.surface))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.line))
-                } else {
-                    Text("Searching for PCs on your network…")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.muted)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-        }
-    }
-}
-
 // MARK: - Host page
 
 private struct HostDetailView: View {
     @EnvironmentObject private var model: LauncherModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let host: TemporaryHost
-    let compact: Bool
-    @Binding var showSettings: Bool
-    @Binding var showAddHost: Bool
+
+    private var compact: Bool { horizontalSizeClass != .regular }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if compact { compactTopBar } else { header }
+                Text(host.statusText).font(.system(size: 13)).foregroundStyle(Theme.muted)
 
                 if host.state == .offline {
                     OfflineCard(host: host)
@@ -287,60 +208,29 @@ private struct HostDetailView: View {
                     library
                 }
             }
-            .padding(.top, compact ? 18 : 26)
+            .padding(.top, 6)
             .padding(.horizontal, compact ? 20 : 28)
             .padding(.bottom, 24)
         }
+        .background(Theme.ground)
         .refreshable { model.select(host, userInitiated: false) }
-    }
-
-    private var header: some View {
-        HStack(alignment: .bottom) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(host.name).font(.system(size: 28, weight: .semibold))
-                Text(host.statusText).font(.system(size: 13)).foregroundStyle(Theme.muted)
-            }
-            Spacer()
-            hostMenu
-        }
-    }
-
-    private var compactTopBar: some View {
-        HStack {
-            Menu {
-                ForEach(model.hosts, id: \.uuid) { other in
-                    Button {
-                        model.select(other, userInitiated: true)
-                    } label: {
-                        Label(other.name, systemImage: other === host ? "checkmark" : "desktopcomputer")
-                    }
+        .navigationTitle(host.name)
+        .toolbar {
+            // Icon-only items: on an iPhone Duo they move into the vertical bar
+            ToolbarItemGroup(placement: .primaryAction) {
+                if host.state != .online {
+                    Button { model.wake(host) } label: { Label("Wake PC", systemImage: "power") }
                 }
-                Divider()
-                Button { model.deselectHost() } label: { Label("All computers", systemImage: "list.bullet") }
-                Button { showAddHost = true } label: { Label("Add computer", systemImage: "plus") }
-            } label: {
-                HStack(spacing: 8) {
-                    Circle().fill(host.state == .online ? Theme.online : Theme.offline).frame(width: 8, height: 8)
-                    Text(host.name).font(.system(size: 16, weight: .semibold))
-                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.muted)
+                Button { model.select(host, userInitiated: false) } label: {
+                    Label("Refresh apps", systemImage: "arrow.clockwise")
                 }
-                .foregroundStyle(Theme.text)
-                .padding(.leading, 12)
-                .padding(.trailing, 14)
-                .frame(minHeight: 44)
-                .overlay(Capsule().strokeBorder(Theme.lineStrong))
+                hostMenu
             }
-            Spacer()
-            hostMenu
-            CircleIconButton(systemName: "gearshape", label: "Settings") { showSettings = true }
         }
     }
 
     private var hostMenu: some View {
         Menu {
-            if host.state != .online {
-                Button { model.wake(host) } label: { Label("Wake PC", systemImage: "power") }
-            }
             if host.pairState == .paired {
                 Button {
                     model.setShowHiddenApps(!model.showHiddenApps)
@@ -351,13 +241,8 @@ private struct HostDetailView: View {
             Button { model.testNetwork() } label: { Label("Test Network", systemImage: "network") }
             Button(role: .destructive) { model.remove(host) } label: { Label("Remove Computer", systemImage: "trash") }
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 44, height: 44)
-                .overlay(Circle().strokeBorder(Theme.lineStrong))
+            Label("More for \(host.name)", systemImage: "ellipsis")
         }
-        .accessibilityLabel("More for \(host.name)")
     }
 
     private var library: some View {

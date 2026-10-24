@@ -12,11 +12,19 @@
 #import "StreamManager.h"
 #import "ControllerSupport.h"
 #import "DataManager.h"
+#if !TARGET_OS_TV
+#import "MNInput.h"
+#endif
 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <Limelight.h>
+
+// The iPhone Duo hinge and fold APIs ship in the iOS 27.1 SDK
+#if !TARGET_OS_TV && defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+#define MN_DUO_APIS 1
+#endif
 
 #if TARGET_OS_TV
 #import <AVFoundation/AVDisplayCriteria.h>
@@ -53,6 +61,12 @@
 #if !TARGET_OS_TV
     UIScreenEdgePanGestureRecognizer *_exitSwipeRecognizer;
     UIButton *_menuButton;
+
+    // Tabletop input deck (keyboard, trackpad, gamepad) under the fold of an iPhone Duo
+    UIViewController *_deckController;
+    BOOL _deckDismissed;   // hidden with its chevron; back on the next fold
+    BOOL _deckRequested;   // opened from the stream menu without a fold
+    BOOL _wasTablePose;
 #endif
 }
 
@@ -117,6 +131,9 @@
     
     _streamView = [[StreamView alloc] initWithFrame:self.view.frame];
     [_streamView setupStreamView:_controllerSupport interactionDelegate:self config:self.streamConfig];
+#if !TARGET_OS_TV
+    [MNInput setControllerSupport:_controllerSupport];
+#endif
     
 #if TARGET_OS_TV
     if (!_menuTapGestureRecognizer || !_menuDoubleTapGestureRecognizer || !_playPauseTapGestureRecognizer) {
@@ -220,6 +237,7 @@
 
 #if !TARGET_OS_TV
     [self setupMenuButton];
+    [self setupHingeObserver];
 #endif
 }
 
@@ -228,7 +246,15 @@
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
 
-    CGRect bounds = self.view.bounds;
+    CGRect fullBounds = self.view.bounds;
+    CGRect bounds = fullBounds;
+#if !TARGET_OS_TV
+    // Half-open on a table: the stream keeps the top half, the input deck takes the bottom
+    CGRect deckFrame = [self layoutInputDeckInBounds:fullBounds];
+    if (!CGRectIsNull(deckFrame)) {
+        bounds.size.height = MAX(CGRectGetMinY(deckFrame) - [self foldThickness], 0);
+    }
+#endif
     if (_scrollView != nil) {
         _scrollView.frame = bounds;
         if (_scrollView.zoomScale == 1.0f) {
@@ -250,6 +276,8 @@
 
 #if !TARGET_OS_TV
     UIEdgeInsets safe = self.view.safeAreaInsets;
+    // Top-right inside the safe area, so it stays clear of the iPhone Duo's sensor strip
+    // whichever edge that is in.
     _menuButton.frame = CGRectMake(bounds.size.width - safe.right - 16 - 44, safe.top + 10, 44, 44);
     [self.view bringSubviewToFront:_menuButton];
 #endif
@@ -287,7 +315,12 @@
             }
         }];
         quitAction.attributes = UIMenuElementAttributesDestructive;
+        BOOL deckShown = strongSelf->_deckController != nil && !strongSelf->_deckController.view.hidden;
         completion(@[
+            [UIAction actionWithTitle:deckShown ? @"Hide Keyboard & Trackpad" : @"Keyboard & Trackpad"
+                                image:[UIImage systemImageNamed:@"keyboard"]
+                           identifier:nil
+                              handler:^(UIAction* action) { [weakSelf toggleInputDeck]; }],
             [UIAction actionWithTitle:statsShown ? @"Hide Stats" : @"Show Stats"
                                 image:[UIImage systemImageNamed:@"chart.bar.xaxis"]
                            identifier:nil
@@ -301,6 +334,109 @@
     }]]];
 
     [self.view addSubview:_menuButton];
+}
+
+// MARK: iPhone Duo hinge + tabletop input deck
+
+- (void)setupHingeObserver {
+#ifdef MN_DUO_APIS
+    if (@available(iOS 27.1, *)) {
+        __weak StreamFrameViewController* weakSelf = self;
+        UIHingeInteraction* hinge = [[UIHingeInteraction alloc] initWithUpdateHandler:^(UIHingeInteraction* interaction, UIHingeInteractionUpdate* update) {
+            // The fold region follows the hinge; re-run layout once it has settled
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf.view setNeedsLayout];
+            });
+        }];
+        [self.view addInteraction:hinge];
+    }
+#endif
+}
+
+// The fold while the device stands half-open on a table (a horizontal division region),
+// in this view's coordinates, or CGRectNull.
+- (CGRect)tableFold {
+#ifdef MN_DUO_APIS
+    if (@available(iOS 27.1, *)) {
+        NSArray<UIViewReservedRegion*>* regions = [self.view reservedRegionsOfKind:[UIViewReservedRegionKind divisionRegionKind]];
+        for (UIViewReservedRegion* region in regions) {
+            CGRect frame = region.frame;
+            if (region.isActive && frame.size.width > frame.size.height) {
+                return frame;
+            }
+        }
+    }
+#endif
+    return CGRectNull;
+}
+
+- (CGFloat)foldThickness {
+    CGRect fold = [self tableFold];
+    return CGRectIsNull(fold) ? 0 : fold.size.height;
+}
+
+// Shows, hides and places the input deck; returns its frame, or CGRectNull when hidden.
+- (CGRect)layoutInputDeckInBounds:(CGRect)bounds {
+    CGRect fold = [self tableFold];
+    BOOL tablePose = !CGRectIsNull(fold);
+    if (tablePose != _wasTablePose) {
+        // Every new fold brings the deck back; unfolding closes a deck the fold opened
+        _deckDismissed = NO;
+        _wasTablePose = tablePose;
+    }
+
+    BOOL show = (tablePose && !_deckDismissed) || _deckRequested;
+    if (!show) {
+        if (_deckController != nil) {
+            _deckController.view.hidden = YES;
+            [_streamView setOnScreenControlsSuppressed:NO];
+        }
+        return CGRectNull;
+    }
+
+    if (_deckController == nil) {
+        __weak StreamFrameViewController* weakSelf = self;
+        _deckController = [MNInputDeck makeViewControllerOnHide:^{
+            [weakSelf hideInputDeck];
+        }];
+        [self addChildViewController:_deckController];
+        [self.view addSubview:_deckController.view];
+        [_deckController didMoveToParentViewController:self];
+    }
+
+    CGRect deck;
+    if (tablePose) {
+        deck = CGRectMake(0, CGRectGetMaxY(fold), bounds.size.width, CGRectGetMaxY(bounds) - CGRectGetMaxY(fold));
+    }
+    else {
+        // Opened by hand on a flat screen: the lower half
+        CGFloat height = floor(bounds.size.height * 0.48);
+        deck = CGRectMake(0, CGRectGetMaxY(bounds) - height, bounds.size.width, height);
+    }
+    _deckController.view.frame = deck;
+    _deckController.view.hidden = NO;
+    [self.view bringSubviewToFront:_deckController.view];
+    // The deck has its own gamepad; on-screen controls over the shrunken video would only cover it
+    [_streamView setOnScreenControlsSuppressed:YES];
+    return deck;
+}
+
+- (void)toggleInputDeck {
+    BOOL shown = _deckController != nil && !_deckController.view.hidden;
+    if (shown) {
+        [self hideInputDeck];
+    }
+    else {
+        _deckDismissed = NO;
+        _deckRequested = CGRectIsNull([self tableFold]);
+        [self.view setNeedsLayout];
+    }
+}
+
+- (void)hideInputDeck {
+    _deckRequested = NO;
+    _deckDismissed = YES;
+    [self.view setNeedsLayout];
 }
 
 - (void)toggleStatsOverlay {
@@ -343,6 +479,9 @@
         return;
     }
     _tornDown = YES;
+#if !TARGET_OS_TV
+    [MNInput setControllerSupport:nil];
+#endif
 
     [_controllerSupport cleanup];
     [UIApplication sharedApplication].idleTimerDisabled = NO;
