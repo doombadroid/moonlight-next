@@ -2,22 +2,17 @@
 //  InputDeckView.swift
 //  Moonlight Next
 //
-//  The tabletop input deck: when an iPhone Duo stands half-open on a table, the stream keeps
-//  the top half and this fills the bottom half. Keyboard and trackpad for desktop use, or a
-//  gamepad. Everything goes to the host through MNInput.
+//  The input deck: when an iPhone Duo is half-open with the fold across the middle (Apple's
+//  "tabletop" pose, though it's mostly held like a Nintendo DS and thumb-typed), the stream
+//  keeps the top half and this fills the bottom half. Keyboard and trackpad, or a gamepad.
+//  Everything goes to the host through MNInput.
 //
 
-import CoreHaptics
 import SwiftUI
 import UIKit
 
 /// Built by StreamFrameViewController (ObjC), which owns the stream and the fold detection.
 @objc final class MNInputDeck: NSObject {
-    /// True while the deck is up because the device stands half-open on a table; set by the
-    /// stream on every layout. iOS damps haptics by about 21 dB in that pose ("StablePose"),
-    /// so key presses switch to a stronger pattern and add a click sound.
-    @objc static var tabletop = false
-
     @objc static func makeViewController(onHide: @escaping () -> Void) -> UIViewController {
         let host = UIHostingController(rootView: InputDeckView(onHide: onHide))
         host.view.backgroundColor = UIColor(red: 5 / 255, green: 5 / 255, blue: 6 / 255, alpha: 1)
@@ -71,91 +66,26 @@ struct InputDeckView: View {
 
 // MARK: - Feedback
 
-/// What a press feels like. In the hand: a light tap for keys, a firmer click for mouse and
-/// gamepad buttons, a soft tick for latching a modifier. On a table, where iOS damps haptics
-/// by about 21 dB, every press plays the strongest Core Haptics pattern instead.
+/// Feels like the system keyboard: a light impact the moment a thumb lands on a key, the same
+/// for letters and modifiers (iOS's own keyboard uses private feedback; this is its public
+/// match). Mouse and gamepad buttons get a firmer click. All of it follows the System Haptics
+/// setting; iOS doesn't expose the separate Keyboard Feedback switch to apps.
 private enum Feedback {
     static let key = UIImpactFeedbackGenerator(style: .light)
     static let click = UIImpactFeedbackGenerator(style: .medium)
-    static let toggle = UISelectionFeedbackGenerator()
 
     static func keyPress() {
-        if MNInputDeck.tabletop {
-            StrongHaptic.shared.play()
-        } else {
-            key.impactOccurred(intensity: 0.7)
-            key.prepare()
-        }
-    }
-
-    static func clickPress() {
-        if MNInputDeck.tabletop {
-            StrongHaptic.shared.play()
-        } else {
-            click.impactOccurred()
-            click.prepare()
-        }
+        key.impactOccurred()
+        key.prepare()
     }
 
     static func modifierToggle() {
-        if MNInputDeck.tabletop {
-            StrongHaptic.shared.play()
-        } else {
-            toggle.selectionChanged()
-            toggle.prepare()
-        }
-    }
-}
-
-/// The tabletop press: a full-intensity transient, then a full-intensity low rumble. These
-/// three numbers are the tuning knobs; they start at the maximum and get turned down by feel.
-private enum TabletopHaptic {
-    /// 0...1
-    static let intensity: Float = 1.0
-    /// Rumble after the tap, in seconds. Longer carries more energy through the table.
-    static let rumbleDuration: TimeInterval = 0.08
-    /// 0 = deepest. Low frequencies travel through a table better than sharp ones.
-    static let rumbleSharpness: Float = 0.0
-}
-
-private final class StrongHaptic {
-    static let shared = StrongHaptic()
-    private var engine: CHHapticEngine?
-    private var player: CHHapticPatternPlayer?
-
-    private init() {
-        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
-        engine = try? CHHapticEngine()
-        engine?.playsHapticsOnly = true
-        engine?.isAutoShutdownEnabled = true
-        engine?.resetHandler = { [weak self] in
-            self?.player = nil
-            try? self?.engine?.start()
-        }
+        keyPress()
     }
 
-    func play() {
-        guard let engine else { return }
-        do {
-            if player == nil {
-                let events = [
-                    CHHapticEvent(eventType: .hapticTransient, parameters: [
-                        CHHapticEventParameter(parameterID: .hapticIntensity, value: TabletopHaptic.intensity),
-                        CHHapticEventParameter(parameterID: .hapticSharpness, value: 1.0),
-                    ], relativeTime: 0),
-                    CHHapticEvent(eventType: .hapticContinuous, parameters: [
-                        CHHapticEventParameter(parameterID: .hapticIntensity, value: TabletopHaptic.intensity),
-                        CHHapticEventParameter(parameterID: .hapticSharpness, value: TabletopHaptic.rumbleSharpness),
-                    ], relativeTime: 0.005, duration: TabletopHaptic.rumbleDuration),
-                ]
-                player = try engine.makePlayer(with: CHHapticPattern(events: events, parameters: []))
-            }
-            try engine.start()
-            try player?.start(atTime: CHHapticTimeImmediate)
-        } catch {
-            // No haptics this press; typing still works
-            player = nil
-        }
+    static func clickPress() {
+        click.impactOccurred()
+        click.prepare()
     }
 }
 
