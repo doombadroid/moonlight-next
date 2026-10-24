@@ -1,0 +1,32 @@
+{
+  "name": "Moonlight Next",
+  "identifier": "io.github.doombadroid.moonlight-next",
+  "subtitle": "Moonlight game streaming, redesigned for iPhone Duo",
+  "apps": [
+    {
+      "name": "Moonlight Next",
+      "bundleIdentifier": "com.doombadroid.moonlightnext",
+      "developerName": "doombadroid (fork of moonlight-stream/moonlight-ios)",
+      "subtitle": "Stream games from your PC",
+      "localizedDescription": "Fork of Moonlight for iOS (GPL-3.0) with a dark SwiftUI launcher and iPhone Duo fold/unfold support. Streams from Sunshine or GeForce Experience.",
+      "iconURL": "https://raw.githubusercontent.com/doombadroid/moonlight-next/master/Limelight/Images.xcassets/AppIcon.appiconset/AppIcon-1024.png",
+      "tintColor": "8ab4ff",
+      "versions": [
+        {
+          "version": "1.0.2",
+          "buildVersion": "2",
+          "date": "2026-10-24T01:08:55Z",
+          "localizedDescription": "Xcode 27.1 Build version 27A9275, iOS SDK 27.1",
+          "downloadURL": "https://github.com/doombadroid/moonlight-next/releases/download/build-2/MoonlightNext-unsigned.ipa",
+          "size": 3103842,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      }
+    }
+  ],
+  "news": []
+}
