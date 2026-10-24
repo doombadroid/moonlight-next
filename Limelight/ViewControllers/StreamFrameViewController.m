@@ -339,6 +339,9 @@
 // MARK: iPhone Duo hinge + tabletop input deck
 
 - (void)setupHingeObserver {
+    // Folding or unfolding changes the size class, and with it the orientation mask above
+    [self registerForTraitChanges:@[UITraitHorizontalSizeClass.class]
+                       withAction:@selector(setNeedsUpdateOfSupportedInterfaceOrientations)];
 #ifdef MN_DUO_APIS
     if (@available(iOS 27.1, *)) {
         __weak StreamFrameViewController* weakSelf = self;
@@ -455,8 +458,11 @@
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    // Stream in landscape on phone-sized displays. The iPhone Duo inner display ignores this.
-    if (self.traitCollection.userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
+    // Landscape only on a compact-width (phone-sized) window. The iPhone Duo's inner display
+    // is regular width and doesn't rotate its window for us: a landscape-only mask there left
+    // the stream laid out landscape-sized inside the portrait window, cut off at the side.
+    if (self.traitCollection.userInterfaceIdiom == UIUserInterfaceIdiomPhone &&
+        self.traitCollection.horizontalSizeClass != UIUserInterfaceSizeClassRegular) {
         return UIInterfaceOrientationMaskLandscape;
     }
     return UIInterfaceOrientationMaskAll;
