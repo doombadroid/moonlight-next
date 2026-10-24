@@ -181,7 +181,12 @@ jobs:
           xcrun simctl launch "$udid" com.doombadroid.moonlightnext
           sleep 10
           mkdir -p "$RUNNER_TEMP/shots"
-          xcrun simctl io "$udid" screenshot "$RUNNER_TEMP/shots/launcher.png"
+          # iPhone Duo has two displays: capture whichever exist (outer and inner)
+          xcrun simctl io "$udid" screenshot "$RUNNER_TEMP/shots/launcher.png" 2>"$RUNNER_TEMP/shots/displays.txt" \
+            || for d in $(grep -oE -- '--display=[0-9]+' "$RUNNER_TEMP/shots/displays.txt" | cut -d= -f2); do
+                 xcrun simctl io "$udid" screenshot --display="$d" "$RUNNER_TEMP/shots/launcher-display$d.png"
+               done
+          ls "$RUNNER_TEMP/shots"/*.png
           xcrun simctl spawn "$udid" log show --last 2m --predicate 'process == "Moonlight"' --style compact > "$RUNNER_TEMP/shots/app.log" || true
           # Still running 10 s after launch?
           pgrep -fl 'Moonlight.app/Moonlight' || { echo "::error::app is not running 10 s after launch"; tail -50 "$RUNNER_TEMP/shots/app.log"; exit 1; }
