@@ -916,7 +916,9 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
     }
 #if !TARGET_OS_TV
     // A tap you can feel for every button press
-    if (buttonPressed) {
+    // Settings › Input › Haptics on button presses (on unless turned off)
+    id hapticsSetting = [[NSUserDefaults standardUserDefaults] objectForKey:@"mnHapticsEnabled"];
+    if (buttonPressed && (hapticsSetting == nil || [hapticsSetting boolValue])) {
         if (_pressHaptic == nil) {
             _pressHaptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
         }

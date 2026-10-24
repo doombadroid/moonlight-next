@@ -161,6 +161,8 @@ final class SettingsStore: ObservableObject {
 struct SettingsView: View {
     @StateObject private var store = SettingsStore()
     @Environment(\.dismiss) private var dismiss
+    /// Read by the input deck and the on-screen controls on every press.
+    @AppStorage("mnHapticsEnabled") private var hapticsEnabled = true
 
     var body: some View {
         NavigationStack {
@@ -229,6 +231,7 @@ struct SettingsView: View {
                     Toggle("Multiple controllers", isOn: $store.multiController)
                     Toggle("Swap A/B and X/Y", isOn: $store.swapABXYButtons)
                     Toggle("Citrix X1 mouse", isOn: $store.btMouseSupport)
+                    Toggle("Haptics on button presses", isOn: $hapticsEnabled)
                 } header: {
                     Theme.label("Input")
                 }

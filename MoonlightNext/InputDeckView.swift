@@ -74,7 +74,11 @@ private enum Feedback {
     static let key = UIImpactFeedbackGenerator(style: .light)
     static let click = UIImpactFeedbackGenerator(style: .medium)
 
+    /// Settings › Input › Haptics on button presses (on unless turned off)
+    static var enabled: Bool { UserDefaults.standard.object(forKey: "mnHapticsEnabled") as? Bool ?? true }
+
     static func keyPress() {
+        guard enabled else { return }
         key.impactOccurred()
         key.prepare()
     }
@@ -84,6 +88,7 @@ private enum Feedback {
     }
 
     static func clickPress() {
+        guard enabled else { return }
         click.impactOccurred()
         click.prepare()
     }
