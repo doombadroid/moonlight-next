@@ -42,17 +42,13 @@
     config.width = [streamSettings.width intValue];
     config.height = [streamSettings.height intValue];
     if (config.width == 0 || config.height == 0) {
-        // "Native": the pixel size of the window the stream will fill. On a phone-sized
-        // display the stream is landscape-only, so use the long edge as the width.
+        // "Native": the pixel size of the window the stream will fill, always landscape (long
+        // edge as the width). The host's desktop is landscape: asking for a portrait stream on
+        // the iPhone Duo's inner display made the host letterbox it into a tall frame, which
+        // then shrank to a small band above the fold in laptop pose.
         CGFloat scale = window.screen.scale;
-        CGFloat w = window.bounds.size.width * scale;
-        CGFloat h = window.bounds.size.height * scale;
-        if (window.traitCollection.horizontalSizeClass == UIUserInterfaceSizeClassCompact ||
-            window.traitCollection.verticalSizeClass == UIUserInterfaceSizeClassCompact) {
-            CGFloat longEdge = MAX(w, h), shortEdge = MIN(w, h);
-            w = longEdge;
-            h = shortEdge;
-        }
+        CGFloat w = MAX(window.bounds.size.width, window.bounds.size.height) * scale;
+        CGFloat h = MIN(window.bounds.size.width, window.bounds.size.height) * scale;
         // Encoders want even dimensions
         config.width = ((int)w) & ~1;
         config.height = ((int)h) & ~1;
