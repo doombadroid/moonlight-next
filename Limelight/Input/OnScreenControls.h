@@ -33,5 +33,8 @@ typedef NS_ENUM(NSInteger, OnScreenControlsLevel) {
 - (OnScreenControlsLevel) getLevel;
 - (void) show;
 - (void) relayout;
+// The view's safe-area insets, grown to keep clear of active occlusion regions such as the
+// iPhone Duo's outer camera (iOS 27.1), which the safe area does not include.
++ (UIEdgeInsets) obstructedInsetsForView:(UIView*)view;
 
 @end

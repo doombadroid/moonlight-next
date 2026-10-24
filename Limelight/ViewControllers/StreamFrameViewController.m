@@ -279,9 +279,9 @@
     }
 
 #if !TARGET_OS_TV
-    UIEdgeInsets safe = self.view.safeAreaInsets;
-    // Top-right inside the safe area, so it stays clear of the iPhone Duo's sensor strip
-    // whichever edge that is in.
+    // Top-right inside the safe area and clear of the camera cut-out (an occlusion region,
+    // not part of the safe area, on the iPhone Duo's outer display)
+    UIEdgeInsets safe = [OnScreenControls obstructedInsetsForView:self.view];
     _menuButton.frame = CGRectMake(bounds.size.width - safe.right - 16 - 44, safe.top + 10, 44, 44);
     [self.view bringSubviewToFront:_menuButton];
 #endif
@@ -406,7 +406,9 @@ static os_log_t DuoLog(void) {
         }
     }
 #endif
-    [diag appendFormat:@" -> %@", CGRectIsNull(fold) ? @"no table pose" : NSStringFromCGRect(fold)];
+    [diag appendFormat:@" -> %@ safe=%@ obstructed=%@", CGRectIsNull(fold) ? @"no table pose" : NSStringFromCGRect(fold),
+     NSStringFromUIEdgeInsets(self.view.safeAreaInsets),
+     NSStringFromUIEdgeInsets([OnScreenControls obstructedInsetsForView:self.view])];
     if (![diag isEqualToString:_lastDuoLog]) {
         _lastDuoLog = diag;
         os_log(DuoLog(), "%{public}@", diag);

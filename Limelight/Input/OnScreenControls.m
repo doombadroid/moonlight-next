@@ -147,13 +147,45 @@ static float L3_Y;
     return self;
 }
 
++ (UIEdgeInsets) obstructedInsetsForView:(UIView*)view {
+    UIEdgeInsets insets = view.safeAreaInsets;
+#if !TARGET_OS_TV && defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+    if (@available(iOS 27.1, *)) {
+        CGRect b = view.bounds;
+        for (UIViewReservedRegion* region in [view reservedRegionsOfKind:[UIViewReservedRegionKind occlusionRegionKind]]) {
+            CGRect f = CGRectIntersection(region.frame, b);
+            if (!region.isActive || CGRectIsEmpty(f)) {
+                continue;
+            }
+            // Clear the region from the edge it sits closest to. A side edge wins a near tie:
+            // that keeps a corner camera to a strip down the side, as the system bar does,
+            // instead of a band across the whole top.
+            CGFloat left = CGRectGetMinX(f) - CGRectGetMinX(b);
+            CGFloat right = CGRectGetMaxX(b) - CGRectGetMaxX(f);
+            CGFloat top = CGRectGetMinY(f) - CGRectGetMinY(b);
+            CGFloat bottom = CGRectGetMaxY(b) - CGRectGetMaxY(f);
+            CGFloat side = MIN(left, right), cap = MIN(top, bottom);
+            if (side <= cap + 24) {
+                if (left <= right) insets.left = MAX(insets.left, CGRectGetMaxX(f) - CGRectGetMinX(b));
+                else insets.right = MAX(insets.right, CGRectGetMaxX(b) - CGRectGetMinX(f));
+            }
+            else {
+                if (top <= bottom) insets.top = MAX(insets.top, CGRectGetMaxY(f) - CGRectGetMinY(b));
+                else insets.bottom = MAX(insets.bottom, CGRectGetMaxY(b) - CGRectGetMinY(f));
+            }
+        }
+    }
+#endif
+    return insets;
+}
+
 // Recompute the control area from the view's current bounds and per-edge safe area.
 // Called again whenever the view resizes (e.g. folding or unfolding an iPhone Duo mid-stream).
 - (void) relayout {
     UITraitCollection* traits = _view.traitCollection;
     BOOL roomy = traits.horizontalSizeClass == UIUserInterfaceSizeClassRegular &&
                  traits.verticalSizeClass == UIUserInterfaceSizeClassRegular;
-    CGRect area = UIEdgeInsetsInsetRect(_view.bounds, _view.safeAreaInsets);
+    CGRect area = UIEdgeInsetsInsetRect(_view.bounds, [OnScreenControls obstructedInsetsForView:_view]);
 
     if (roomy == _iPad && CGRectEqualToRect(area, _usableArea)) {
         return;
@@ -347,8 +379,60 @@ static float L3_Y;
     }
 }
 
+// Squarer than a phone in landscape (the iPhone Duo's outer display is about 1.45:1): the
+// percentage layout below overlaps the sticks with the D-pad and buttons and pushes B off the
+// edge. Stack each side instead, D-pad over the left stick and ABXY over the right, and size
+// every cluster from its artwork so it stays inside the control area.
+- (void) setupSquareControls
+{
+    CGRect a = _controlArea;
+    CGFloat gap = 4;
+    UIImage* left = [UIImage imageNamed:@"LeftButton"];
+    UIImage* up = [UIImage imageNamed:@"UpButton"];
+    UIImage* b = [UIImage imageNamed:@"BButton"];
+    UIImage* y = [UIImage imageNamed:@"YButton"];
+    UIImage* stick = [UIImage imageNamed:@"StickOuter"];
+    UIImage* l1 = [UIImage imageNamed:@"L1"];
+    UIImage* select = [UIImage imageNamed:@"SelectButton"];
+
+    CGFloat dpadHalfW = D_PAD_DIST + left.size.width;
+    CGFloat dpadHalfH = D_PAD_DIST + up.size.height;
+    CGFloat buttonsHalfW = BUTTON_DIST + b.size.width;
+    CGFloat buttonsHalfH = BUTTON_DIST + y.size.height;
+    CGFloat stickHalf = stick.size.width / 2;
+
+    // Sticks at the bottom corners, where thumbs rest
+    LS_CENTER_X = CGRectGetMinX(a) + stickHalf + gap;
+    RS_CENTER_X = CGRectGetMaxX(a) - stickHalf - gap;
+    LS_CENTER_Y = RS_CENTER_Y = CGRectGetMaxY(a) - stickHalf - gap;
+
+    // D-pad and ABXY above them, centred between the shoulders and the sticks
+    CGFloat shouldersBottom = CGRectGetMinY(a) + a.size.height * .27 + l1.size.height / 2;
+    CGFloat sticksTop = LS_CENTER_Y - stickHalf;
+    CGFloat midY = (shouldersBottom + sticksTop) / 2;
+    D_PAD_CENTER_X = CGRectGetMinX(a) + MAX(dpadHalfW, stickHalf) + gap;
+    D_PAD_CENTER_Y = MAX(midY, shouldersBottom + dpadHalfH + gap);
+    BUTTON_CENTER_X = CGRectGetMaxX(a) - MAX(buttonsHalfW, stickHalf) - gap;
+    BUTTON_CENTER_Y = MAX(midY, shouldersBottom + buttonsHalfH + gap);
+
+    L1_X = L2_X = CGRectGetMinX(a) + l1.size.width / 2 + gap;
+    R1_X = R2_X = CGRectGetMaxX(a) - l1.size.width / 2 - gap;
+    L1_Y = R1_Y = CGRectGetMinY(a) + a.size.height * .27;
+    L2_Y = R2_Y = CGRectGetMinY(a) + a.size.height * .1;
+
+    // Select / Start between the sticks
+    SELECT_X = CGRectGetMidX(a) - select.size.width / 2 - 12;
+    START_X = CGRectGetMidX(a) + select.size.width / 2 + 12;
+    SELECT_Y = START_Y = CGRectGetMaxY(a) - select.size.height / 2 - gap;
+}
+
 - (void) setupComplexControls
 {
+    if (!_iPad && _controlArea.size.height > 0 && _controlArea.size.width / _controlArea.size.height < 1.8) {
+        [self setupSquareControls];
+        return;
+    }
+
     D_PAD_CENTER_X = _controlArea.size.width * .1 + _controlArea.origin.x;
     D_PAD_CENTER_Y = _controlArea.size.height * .60 + _controlArea.origin.y;
     BUTTON_CENTER_X = _controlArea.size.width * .9 + _controlArea.origin.x;
