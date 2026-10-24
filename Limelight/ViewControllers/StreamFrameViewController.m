@@ -432,6 +432,8 @@ static os_log_t DuoLog(void) {
     }
 
     BOOL show = (tablePose && !_deckDismissed) || _deckRequested;
+    // Key presses switch to stronger haptics and a click sound on a table (iOS damps haptics there)
+    MNInputDeck.tabletop = show && tablePose;
     if (!show) {
         if (_deckController != nil) {
             _deckController.view.hidden = YES;

@@ -7,11 +7,18 @@
 //  gamepad. Everything goes to the host through MNInput.
 //
 
+import AVFoundation
+import CoreHaptics
 import SwiftUI
 import UIKit
 
 /// Built by StreamFrameViewController (ObjC), which owns the stream and the fold detection.
 @objc final class MNInputDeck: NSObject {
+    /// True while the deck is up because the device stands half-open on a table; set by the
+    /// stream on every layout. iOS damps haptics by about 21 dB in that pose ("StablePose"),
+    /// so key presses switch to a stronger pattern and add a click sound.
+    @objc static var tabletop = false
+
     @objc static func makeViewController(onHide: @escaping () -> Void) -> UIViewController {
         let host = UIHostingController(rootView: InputDeckView(onHide: onHide))
         host.view.backgroundColor = UIColor(red: 5 / 255, green: 5 / 255, blue: 6 / 255, alpha: 1)
@@ -63,18 +70,119 @@ struct InputDeckView: View {
     }
 }
 
-// MARK: - Haptics
+// MARK: - Feedback
 
-/// Taps you can feel: light for keys, a firmer click for mouse and gamepad buttons, a soft
-/// tick for latching a modifier. Generators are kept warm so the first press isn't late.
-private enum Haptics {
+/// What a press feels and sounds like. In the hand: a light tap for keys, a firmer click for
+/// mouse and gamepad buttons, a soft tick for latching a modifier. On a table, where iOS damps
+/// haptics by about 21 dB, keys get a full-strength Core Haptics burst with a short low tail
+/// (felt through the table rather than the fingertip) plus a key click through the media audio.
+private enum Feedback {
     static let key = UIImpactFeedbackGenerator(style: .light)
     static let click = UIImpactFeedbackGenerator(style: .medium)
     static let toggle = UISelectionFeedbackGenerator()
 
-    static func keyPress() { key.impactOccurred(intensity: 0.7); key.prepare() }
-    static func clickPress() { click.impactOccurred(); click.prepare() }
-    static func modifierToggle() { toggle.selectionChanged(); toggle.prepare() }
+    static func keyPress() {
+        if MNInputDeck.tabletop {
+            StrongHaptic.shared.play(intensity: 1.0)
+            KeyClickSound.shared.play()
+        } else {
+            key.impactOccurred(intensity: 0.7)
+            key.prepare()
+        }
+    }
+
+    static func clickPress() {
+        if MNInputDeck.tabletop {
+            StrongHaptic.shared.play(intensity: 1.0)
+        } else {
+            click.impactOccurred()
+            click.prepare()
+        }
+    }
+
+    static func modifierToggle() {
+        if MNInputDeck.tabletop {
+            StrongHaptic.shared.play(intensity: 0.8)
+            KeyClickSound.shared.play()
+        } else {
+            toggle.selectionChanged()
+            toggle.prepare()
+        }
+    }
+}
+
+/// A full-intensity transient followed by 30 ms of low-sharpness rumble: the most energy a
+/// key-length haptic can carry, to get through the system's tabletop damping.
+private final class StrongHaptic {
+    static let shared = StrongHaptic()
+    private var engine: CHHapticEngine?
+
+    private init() {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        engine = try? CHHapticEngine()
+        engine?.isAutoShutdownEnabled = true
+        engine?.resetHandler = { [weak self] in try? self?.engine?.start() }
+    }
+
+    func play(intensity: Float) {
+        guard let engine else { return }
+        let events = [
+            CHHapticEvent(eventType: .hapticTransient, parameters: [
+                CHHapticEventParameter(parameterID: .hapticIntensity, value: intensity),
+                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.6),
+            ], relativeTime: 0),
+            CHHapticEvent(eventType: .hapticContinuous, parameters: [
+                CHHapticEventParameter(parameterID: .hapticIntensity, value: intensity),
+                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.1),
+            ], relativeTime: 0.005, duration: 0.03),
+        ]
+        do {
+            try engine.start()
+            let player = try engine.makePlayer(with: CHHapticPattern(events: events, parameters: []))
+            try player.start(atTime: CHHapticTimeImmediate)
+        } catch {
+            // No haptics this press; typing still works
+        }
+    }
+}
+
+/// A short synthesized key click, played through the media volume alongside the stream's
+/// audio (the session is .playback, mix with others).
+private final class KeyClickSound {
+    static let shared = KeyClickSound()
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private var buffer: AVAudioPCMBuffer?
+
+    private init() {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+        let frames = AVAudioFrameCount(44_100 * 0.018)
+        guard let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+              let samples = pcm.floatChannelData?[0] else { return }
+        pcm.frameLength = frames
+        // A damped 2.4 kHz tick with a little noise: reads as a keycap, not a beep
+        var seed: UInt32 = 1
+        for i in 0..<Int(frames) {
+            let t = Float(i) / 44_100
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            let noise = Float(seed >> 8) / Float(1 << 24) * 2 - 1
+            samples[i] = (sin(2 * .pi * 2_400 * t) * 0.6 + noise * 0.4) * exp(-t * 320) * 0.5
+        }
+        buffer = pcm
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+    }
+
+    func play() {
+        guard let buffer else { return }
+        if !engine.isRunning {
+            try? engine.start()
+        }
+        player.scheduleBuffer(buffer, at: nil, options: .interrupts)
+        if !player.isPlaying {
+            player.play()
+        }
+    }
 }
 
 // MARK: - Press helper
@@ -124,10 +232,10 @@ private final class KeyboardState: ObservableObject {
     func press(_ key: Key) {
         switch key.kind {
         case .modifier(let m):
-            Haptics.modifierToggle()
+            Feedback.modifierToggle()
             if latched.contains(m) { latched.remove(m) } else { latched.insert(m) }
         default:
-            Haptics.keyPress()
+            Feedback.keyPress()
             for (m, vk) in Self.modifierKeys where latched.contains(m) {
                 MNInput.keyDown(vk, modifiers: latched)
             }
@@ -147,8 +255,10 @@ private final class KeyboardState: ObservableObject {
 
 private struct KeyboardPanel: View {
     @StateObject private var state = KeyboardState()
+    @SwiftUI.State private var pressed: Set<UUID> = []
 
-    private let rows: [[Key]] = {
+    // Static so key ids stay stable across re-renders (the pressed set is keyed by them)
+    private static let rows: [[Key]] = {
         func letters(_ s: String) -> [Key] { s.map { Key(label: String($0), vk: VK.char($0)) } }
         return [
             [Key(label: "esc", vk: VK.escape, weight: 1.2, accessibility: "Escape")] + letters("1234567890")
@@ -170,16 +280,23 @@ private struct KeyboardPanel: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            ForEach(rows.indices, id: \.self) { r in
+            ForEach(Self.rows.indices, id: \.self) { r in
                 GeometryReader { geo in
-                    let row = rows[r]
+                    let row = Self.rows[r]
                     let gaps = CGFloat(row.count - 1) * 5
                     let unit = (geo.size.width - gaps) / row.reduce(0) { $0 + $1.weight }
                     HStack(spacing: 5) {
                         ForEach(row) { key in
-                            KeyCap(key: key, latched: isLatched(key))
+                            KeyCap(key: key, latched: isLatched(key), pressed: pressed.contains(key.id))
                                 .frame(width: unit * key.weight)
-                                .onPress(down: { state.press(key) }, up: { state.release(key) })
+                                .zIndex(pressed.contains(key.id) ? 1 : 0)
+                                .onPress(down: {
+                                    pressed.insert(key.id)
+                                    state.press(key)
+                                }, up: {
+                                    pressed.remove(key.id)
+                                    state.release(key)
+                                })
                         }
                     }
                 }
@@ -197,17 +314,24 @@ private struct KeyboardPanel: View {
 private struct KeyCap: View {
     let key: Key
     let latched: Bool
+    var pressed = false
 
     var body: some View {
         let isLetter = key.label.count == 1 && key.label.first!.isLetter || key.label.first?.isNumber == true
         let accent: Bool = { if case .accent = key.kind { return true }; return false }()
+        let lit = accent || latched || pressed
         Text(key.label)
-            .font(.system(size: isLetter || key.label.count == 1 ? 15 : 12, weight: .medium))
-            .foregroundStyle(accent || latched ? Color.black : (isLetter ? Theme.text : Color(hex: 0xA3A3AA)))
+            .font(.system(size: isLetter || key.label.count == 1 ? 15 : 12, weight: pressed ? .semibold : .medium))
+            .foregroundStyle(lit ? Color.black : (isLetter ? Theme.text : Color(hex: 0xA3A3AA)))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(RoundedRectangle(cornerRadius: 7)
-                .fill(accent || latched ? Theme.accent : (isLetter ? Color(hex: 0x0F0F13) : Color(hex: 0x141419))))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color(hex: 0x1F1F25)))
+                .fill(lit ? Theme.accent : (isLetter ? Color(hex: 0x0F0F13) : Color(hex: 0x141419))))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(pressed ? Color.white.opacity(0.6) : Color(hex: 0x1F1F25)))
+            // Pressed keys pop up and grow above the finger, like a phone keyboard's key preview
+            .scaleEffect(pressed ? 1.18 : 1, anchor: .bottom)
+            .offset(y: pressed ? -4 : 0)
+            .shadow(color: Theme.accent.opacity(pressed ? 0.45 : 0), radius: 8)
+            .animation(.spring(duration: 0.12), value: pressed)
             .contentShape(Rectangle())
             .accessibilityElement()
             .accessibilityLabel(key.accessibility ?? key.label)
@@ -257,7 +381,7 @@ private struct ClickButton: View {
                                             bottomTrailingRadius: corners.1, topTrailingRadius: corners.1)
                 .stroke(Color(hex: 0x1F1F25), lineWidth: 1))
             .contentShape(Rectangle())
-            .onPress(down: { pressed = true; Haptics.clickPress(); MNInput.mouseButton(button, down: true) },
+            .onPress(down: { pressed = true; Feedback.clickPress(); MNInput.mouseButton(button, down: true) },
                      up: { pressed = false; MNInput.mouseButton(button, down: false) })
             .accessibilityAddTraits(.isButton)
     }
@@ -329,7 +453,7 @@ final class TrackpadUIView: UIView {
     }
 
     private func click(_ button: MNMouseButton) {
-        Haptics.clickPress()
+        Feedback.clickPress()
         MNInput.mouseButton(button, down: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             MNInput.mouseButton(button, down: false)
@@ -404,7 +528,7 @@ private struct PadButton: View {
         .overlay(Capsule().strokeBorder(filled ? Color.clear : Color(hex: 0x2E2E35)))
         .scaleEffect(pressed ? 0.94 : 1)
         .contentShape(Capsule())
-        .onPress(down: { pressed = true; Haptics.clickPress(); send(true) }, up: { pressed = false; send(false) })
+        .onPress(down: { pressed = true; Feedback.clickPress(); send(true) }, up: { pressed = false; send(false) })
         .accessibilityLabel(label)
         .accessibilityAddTraits(.isButton)
     }
