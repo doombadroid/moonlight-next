@@ -241,15 +241,16 @@ private struct CompactHostList: View {
                     CircleIconButton(systemName: "gearshape", label: "Settings") { showSettings = true }
                 }
                 Theme.label("Computers")
-                VStack(spacing: 6) {
-                    ForEach(model.hosts, id: \.uuid) { host in
-                        HostRow(host: host) { model.select(host, userInitiated: true) }
+                if !model.hosts.isEmpty {
+                    VStack(spacing: 6) {
+                        ForEach(model.hosts, id: \.uuid) { host in
+                            HostRow(host: host) { model.select(host, userInitiated: true) }
+                        }
                     }
-                }
-                .padding(4)
-                .background(RoundedRectangle(cornerRadius: Theme.cardRadius).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.line))
-                if model.hosts.isEmpty {
+                    .padding(4)
+                    .background(RoundedRectangle(cornerRadius: Theme.cardRadius).fill(Theme.surface))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.line))
+                } else {
                     Text("Searching for PCs on your network…")
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.muted)
