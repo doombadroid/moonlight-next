@@ -118,6 +118,10 @@ struct HostInfoSheet: View {
             }
         }
         .listRowBackground(Theme.surface)
+        .navTarget {
+            UIPasteboard.general.string = value
+            copied = label
+        }
         .accessibilityLabel("\(label), \(value)")
         .accessibilityHint("Copies the value")
     }

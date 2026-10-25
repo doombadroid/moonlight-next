@@ -9,9 +9,11 @@ import SwiftUI
 
 struct AboutView: View {
     static let repoURL = URL(string: "https://github.com/doombadroid/moonlight-next")!
+    static let gplURL = URL(string: "https://www.gnu.org/licenses/gpl-3.0.html")!
     static let sideStoreSource = "https://raw.githubusercontent.com/doombadroid/moonlight-next/master/sidestore-source.json"
 
     @SwiftUI.State private var copiedSource = false
+    @Environment(\.openURL) private var openURL
 
     private var version: String {
         let info = Bundle.main.infoDictionary
@@ -59,12 +61,11 @@ struct AboutView: View {
                 Link(destination: Self.repoURL) {
                     row("Source code", detail: "github.com/doombadroid/moonlight-next", icon: "chevron.left.forwardslash.chevron.right")
                 }
-                Button {
-                    UIPasteboard.general.string = Self.sideStoreSource
-                    copiedSource = true
-                } label: {
+                .navTarget { openURL(Self.repoURL) }
+                Button(action: copySideStoreSource) {
                     row("SideStore source", detail: copiedSource ? "Copied" : "Copy URL", icon: copiedSource ? "checkmark" : "doc.on.doc")
                 }
+                .navTarget(activate: copySideStoreSource)
             } header: {
                 Theme.label("Get MoonLume")
             } footer: {
@@ -86,18 +87,25 @@ struct AboutView: View {
                         }
                         .padding(.vertical, 2)
                     }
+                    .navTarget { openURL(URL(string: credit.url)!) }
                 }
             } header: {
                 Theme.label("Credits and licences")
             } footer: {
                 Link("MoonLume is free software under the GNU General Public License v3.",
-                     destination: URL(string: "https://www.gnu.org/licenses/gpl-3.0.html")!)
+                     destination: Self.gplURL)
+                    .navTarget { openURL(Self.gplURL) }
             }
         }
         .scrollContentBackground(.hidden)
         .background(Theme.ground)
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func copySideStoreSource() {
+        UIPasteboard.general.string = Self.sideStoreSource
+        copiedSource = true
     }
 
     private func row(_ title: String, detail: String, icon: String) -> some View {
