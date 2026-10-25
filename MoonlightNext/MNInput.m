@@ -52,9 +52,11 @@ static __weak ControllerSupport* sControllerSupport;
     }
 }
 
+// Deck and widget input goes to its own controller and gyro input to another, both merged into
+// player 1 when sent, so neither releases what the on-screen controls (or each other) hold
 + (void) gamepadButton:(int)flag down:(BOOL)down {
     ControllerSupport* cs = sControllerSupport;
-    Controller* controller = [cs getOscController];
+    Controller* controller = [cs getInputController];
     if (controller == nil) {
         return;
     }
@@ -64,57 +66,43 @@ static __weak ControllerSupport* sControllerSupport;
     else {
         [cs clearButtonFlag:controller flags:flag];
     }
-    [cs updateFinished:controller];
+    [cs updateFinished:[cs getOscController]];
 }
 
 + (void) gamepadLeftStickX:(short)x y:(short)y {
     ControllerSupport* cs = sControllerSupport;
-    Controller* controller = [cs getOscController];
-    if (controller == nil) {
-        return;
-    }
-    [cs updateLeftStick:controller x:x y:y];
-    [cs updateFinished:controller];
+    [cs updateLeftStick:[cs getInputController] x:x y:y];
+    [cs updateFinished:[cs getOscController]];
 }
 
 + (void) gamepadRightStickX:(short)x y:(short)y {
     ControllerSupport* cs = sControllerSupport;
-    Controller* controller = [cs getOscController];
-    if (controller == nil) {
-        return;
-    }
-    [cs updateRightStick:controller x:x y:y];
-    [cs updateFinished:controller];
+    [cs updateRightStick:[cs getInputController] x:x y:y];
+    [cs updateFinished:[cs getOscController]];
 }
 
 + (void) gamepadLeftTrigger:(uint8_t)left {
     ControllerSupport* cs = sControllerSupport;
-    Controller* controller = [cs getOscController];
-    if (controller == nil) {
-        return;
-    }
-    [cs updateLeftTrigger:controller left:left];
-    [cs updateFinished:controller];
+    [cs updateLeftTrigger:[cs getInputController] left:left];
+    [cs updateFinished:[cs getOscController]];
 }
 
 + (void) gamepadRightTrigger:(uint8_t)right {
     ControllerSupport* cs = sControllerSupport;
-    Controller* controller = [cs getOscController];
-    if (controller == nil) {
-        return;
-    }
-    [cs updateRightTrigger:controller right:right];
-    [cs updateFinished:controller];
+    [cs updateRightTrigger:[cs getInputController] right:right];
+    [cs updateFinished:[cs getOscController]];
+}
+
++ (void) gamepadGyroStickX:(short)x y:(short)y {
+    ControllerSupport* cs = sControllerSupport;
+    [cs updateRightStick:[cs getGyroController] x:x y:y];
+    [cs updateFinished:[cs getOscController]];
 }
 
 + (void) gamepadSteerX:(short)x {
     ControllerSupport* cs = sControllerSupport;
-    Controller* controller = [cs getOscController];
-    if (controller == nil) {
-        return;
-    }
-    [cs updateLeftStick:controller x:x y:controller.lastLeftStickY];
-    [cs updateFinished:controller];
+    [cs updateLeftStick:[cs getGyroController] x:x y:0];
+    [cs updateFinished:[cs getOscController]];
 }
 
 + (void) controllerTouch:(MNControllerTouchPhase)phase pointer:(uint32_t)pointer x:(float)x y:(float)y {
@@ -129,7 +117,8 @@ static __weak ControllerSupport* sControllerSupport;
 }
 
 + (BOOL) aimTriggerHeld {
-    return [sControllerSupport getOscController].lastLeftTrigger > 64;
+    ControllerSupport* cs = sControllerSupport;
+    return MAX([cs getOscController].lastLeftTrigger, [cs getInputController].lastLeftTrigger) > 64;
 }
 
 @end

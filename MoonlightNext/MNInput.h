@@ -51,7 +51,7 @@ typedef NS_ENUM(uint8_t, MNControllerTouchPhase) {
 // Horizontal, same units; positive scrolls right.
 + (void) hscroll:(short)amount;
 
-// Button flags as in Limelight.h (A_FLAG = 0x1000 ...), merged into the on-screen controller.
+// Button flags as in Limelight.h (A_FLAG = 0x1000 ...), merged into player 1.
 + (void) gamepadButton:(int)flag down:(BOOL)down;
 // -32768...32767, y up is positive.
 + (void) gamepadLeftStickX:(short)x y:(short)y;
@@ -63,7 +63,8 @@ typedef NS_ENUM(uint8_t, MNControllerTouchPhase) {
 // x, y run 0...1 from the top left; pointer is 0 or 1.
 + (void) controllerTouch:(MNControllerTouchPhase)phase pointer:(uint32_t)pointer x:(float)x y:(float)y;
 
-// Left stick x only, leaving y to the on-screen stick (gyro steering).
+// Gyro aiming's right stick and steering's left stick x, added to whatever stick is held.
++ (void) gamepadGyroStickX:(short)x y:(short)y;
 + (void) gamepadSteerX:(short)x;
 // Player 1 motion sample in the host's convention (SDL axes; m/s² for accel, deg/s for gyro).
 // type: 1 = accelerometer, 2 = gyroscope (LI_MOTION_TYPE_*).

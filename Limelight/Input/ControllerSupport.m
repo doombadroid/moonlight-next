@@ -51,6 +51,9 @@ static BOOL MouseCaptured(void) {
     
     OnScreenControls *_osc;
     Controller *_oscController;
+    // Player 1's other sources, merged into it when sent (see ControllerSupport.h)
+    Controller *_inputController;
+    Controller *_gyroController;
     
 #define EMULATING_SELECT     0x1
 #define EMULATING_SPECIAL    0x2
@@ -66,6 +69,8 @@ static BOOL MouseCaptured(void) {
 ((y) ? [self setButtonFlag:controller flags:x] : [self clearButtonFlag:controller flags:x])
 
 #define MAX_MAGNITUDE(x, y) (abs(x) > abs(y) ? (x) : (y))
+// Gyro aiming and steering add to a stick a finger or pad already holds
+#define ADD_STICK(x, y) ((short)MAX(-0x7FFE, MIN(0x7FFE, (int)(x) + (int)(y))))
 
 #if !TARGET_OS_TV
 // Scale a stick radially so any deflection starts at `minimum` of full travel (0...1)
@@ -438,6 +443,21 @@ static void LiftStick(short* x, short* y, double minimum)
                 leftStickY = MAX_MAGNITUDE(leftStickY, controller.mergedWithController.lastLeftStickY);
                 rightStickX = MAX_MAGNITUDE(rightStickX, controller.mergedWithController.lastRightStickX);
                 rightStickY = MAX_MAGNITUDE(rightStickY, controller.mergedWithController.lastRightStickY);
+            }
+            
+            // Player 1 also carries the deck and widgets, and gyro aiming and steering
+            if (controller == _oscController || controller.mergedWithController == _oscController) {
+                Controller* input = _inputController;
+                buttonFlags |= input.lastButtonFlags;
+                leftTrigger = MAX(leftTrigger, input.lastLeftTrigger);
+                rightTrigger = MAX(rightTrigger, input.lastRightTrigger);
+                leftStickX = MAX_MAGNITUDE(leftStickX, input.lastLeftStickX);
+                leftStickY = MAX_MAGNITUDE(leftStickY, input.lastLeftStickY);
+                rightStickX = MAX_MAGNITUDE(rightStickX, input.lastRightStickX);
+                rightStickY = MAX_MAGNITUDE(rightStickY, input.lastRightStickY);
+                leftStickX = ADD_STICK(leftStickX, _gyroController.lastLeftStickX);
+                rightStickX = ADD_STICK(rightStickX, _gyroController.lastRightStickX);
+                rightStickY = ADD_STICK(rightStickY, _gyroController.lastRightStickY);
             }
             
             // Player 1 is always present for OSC
@@ -1153,9 +1173,12 @@ static void LiftStick(short* x, short* y, double minimum)
             limeController.supportedEmulationFlags = EMULATING_SPECIAL | EMULATING_SELECT;
             limeController.gamepad = controller;
 
-            // If this is player 0, it shares state with the OSC
-            limeController.mergedWithController = _oscController;
-            _oscController.mergedWithController = limeController;
+            // If this is player 0, it shares state with the OSC. Only player 0: the OSC sends as
+            // player 1, so merging a later pad would send its input as player 1's.
+            if (i == 0) {
+                limeController.mergedWithController = _oscController;
+                _oscController.mergedWithController = limeController;
+            }
             
             if (@available(iOS 13.0, tvOS 13.0, *)) {
                 if (controller.extendedGamepad != nil &&
@@ -1188,6 +1211,14 @@ static void LiftStick(short* x, short* y, double minimum)
 
 -(Controller*) getOscController {
     return _oscController;
+}
+
+-(Controller*) getInputController {
+    return _inputController;
+}
+
+-(Controller*) getGyroController {
+    return _gyroController;
 }
 
 +(bool) isSupportedGamepad:(GCController*) controller {
@@ -1257,6 +1288,8 @@ static void LiftStick(short* x, short* y, double minimum)
 
     _oscController = [[Controller alloc] init];
     _oscController.playerIndex = 0;
+    _inputController = [[Controller alloc] init];
+    _gyroController = [[Controller alloc] init];
 
     DataManager* dataMan = [[DataManager alloc] init];
     _oscEnabled = (OnScreenControlsLevel)[[dataMan getSettings].onscreenControls integerValue] != OnScreenControlsLevelOff;
@@ -1331,8 +1364,7 @@ static void LiftStick(short* x, short* y, double minimum)
             [self cleanupControllerBattery:limeController];
             
             // Disassociate this controller from any controllers merged with it
-            if (limeController.mergedWithController) {
-                assert(limeController.mergedWithController.mergedWithController == limeController);
+            if (limeController.mergedWithController.mergedWithController == limeController) {
                 limeController.mergedWithController.mergedWithController = nil;
             }
             

@@ -319,7 +319,7 @@ enum GyroSettings {
         case .rightStick:
             // stick y is up-positive
             let stick = MNGyro.shapeStick(x: horizontal * stickPerRadianPerSecond, y: -vertical * stickPerRadianPerSecond, minimum: GyroSettings.minStick)
-            MNInput.gamepadRightStickX(Int16(stick.x * 32767), y: Int16(stick.y * 32767))
+            MNInput.gamepadGyroStickX(Int16(stick.x * 32767), y: Int16(stick.y * 32767))
             stickActive = true
         case .off:
             break
@@ -429,7 +429,7 @@ enum GyroSettings {
     private func releaseStick() {
         guard stickActive else { return }
         stickActive = false
-        MNInput.gamepadRightStickX(0, y: 0)
+        MNInput.gamepadGyroStickX(0, y: 0)
     }
 
     private func releaseSteer() {
