@@ -28,6 +28,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.rootViewController = root
         self.window = window
         model.window = window
+        LauncherModel.current = model
         window.makeKeyAndVisible()
 
         model.start()

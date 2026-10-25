@@ -24,6 +24,9 @@ struct RunningAppChoice: Identifiable {
 }
 
 final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCallback, AppAssetCallback {
+    /// The scene's model, for App Intents (one window).
+    static weak var current: LauncherModel?
+
     @Published private(set) var hosts: [TemporaryHost] = []
     @Published private(set) var selectedHost: TemporaryHost?
     @Published private(set) var apps: [TemporaryApp] = []
@@ -155,6 +158,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
                                       icon: UIApplicationShortcutIcon(type: .play),
                                       userInfo: ["UUID": $0.uuid as NSString])
         }
+        MoonLumeShortcuts.updateAppShortcutParameters() // Siri phrases name the saved PCs
     }
 
     func deselectHost() {
