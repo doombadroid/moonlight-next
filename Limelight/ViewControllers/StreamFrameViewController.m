@@ -333,6 +333,10 @@
                                 image:[UIImage systemImageNamed:@"keyboard"]
                            identifier:nil
                               handler:^(UIAction* action) { [weakSelf toggleInputDeck]; }],
+            [UIAction actionWithTitle:@"Settings"
+                                image:[UIImage systemImageNamed:@"gearshape"]
+                           identifier:nil
+                              handler:^(UIAction* action) { [weakSelf presentStreamSettings]; }],
             [UIAction actionWithTitle:statsShown ? @"Hide Stats" : @"Show Stats"
                                 image:[UIImage systemImageNamed:@"chart.bar.xaxis"]
                            identifier:nil
@@ -473,6 +477,18 @@ static os_log_t DuoLog(void) {
     // The deck has its own gamepad; on-screen controls over the shrunken video would only cover it
     [_streamView setOnScreenControlsSuppressed:YES];
     return deck;
+}
+
+- (void)presentStreamSettings {
+    __weak StreamFrameViewController* weakSelf = self;
+    UIViewController* sheet = [MNSettingsSheet makeViewControllerOnClose:^{
+        StreamFrameViewController* strongSelf = weakSelf;
+        if (strongSelf != nil) {
+            [strongSelf->_streamView reloadOnScreenControlsLevel];
+        }
+    }];
+    sheet.modalPresentationStyle = UIModalPresentationFormSheet;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)toggleInputDeck {

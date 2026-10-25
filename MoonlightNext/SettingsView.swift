@@ -159,6 +159,8 @@ final class SettingsStore: ObservableObject {
 }
 
 struct SettingsView: View {
+    /// Opened from the stream menu: video settings wait for the next connection
+    var inStream = false
     @StateObject private var store = SettingsStore()
     @Environment(\.dismiss) private var dismiss
     /// Read by the input deck and the on-screen controls on every press.
@@ -215,6 +217,10 @@ struct SettingsView: View {
                     }
                 } header: {
                     Theme.label("Video")
+                } footer: {
+                    if inStream {
+                        Text("Video changes apply the next time you connect. Controls, gyro, haptics and trackpad speed apply now.")
+                    }
                 }
 
                 Section {
@@ -315,5 +321,12 @@ struct SettingsView: View {
             picker().pickerStyle(.segmented).labelsHidden()
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// Settings over a running stream, from the stream menu (StreamFrameViewController is ObjC).
+@objc final class MNSettingsSheet: NSObject {
+    @objc static func makeViewController(onClose: @escaping () -> Void) -> UIViewController {
+        UIHostingController(rootView: SettingsView(inStream: true).onDisappear(perform: onClose))
     }
 }

@@ -21,6 +21,7 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 
 @implementation StreamView {
     OnScreenControls* onScreenControls;
+    __weak ControllerSupport* oscControllerSupport;
     BOOL oscSuppressed;
     OnScreenControlsLevel levelBeforeSuppression;
     
@@ -79,6 +80,7 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     }
     
     onScreenControls = [[OnScreenControls alloc] initWithView:self controllerSup:controllerSupport streamConfig:streamConfig];
+    oscControllerSupport = controllerSupport;
     OnScreenControlsLevel level = (OnScreenControlsLevel)[settings.onscreenControls integerValue];
     if (settings.absoluteTouchMode) {
         Log(LOG_I, @"On-screen controls disabled in absolute touch mode");
@@ -193,6 +195,25 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 }
 
 #if !TARGET_OS_TV
+- (void) reloadOnScreenControlsLevel {
+    if (onScreenControls == nil) {
+        return;
+    }
+    TemporarySettings* settings = [[[DataManager alloc] init] getSettings];
+    OnScreenControlsLevel level = settings.absoluteTouchMode ? OnScreenControlsLevelOff
+                                                             : (OnScreenControlsLevel)[settings.onscreenControls integerValue];
+    if (oscSuppressed) {
+        // The input deck is up; this is what comes back when it goes
+        levelBeforeSuppression = level;
+    }
+    else if (level == OnScreenControlsLevelAuto) {
+        [oscControllerSupport initAutoOnScreenControlMode:onScreenControls];
+    }
+    else {
+        [onScreenControls setLevel:level];
+    }
+}
+
 - (void) setOnScreenControlsSuppressed:(BOOL)suppressed {
     if (onScreenControls == nil || suppressed == oscSuppressed) {
         return;
