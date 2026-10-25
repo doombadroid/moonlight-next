@@ -17,14 +17,14 @@ struct ControllerNavigationSection: View {
     @AppStorage(QuickMenuSettings.buttonKey) private var quickMenuButton = QuickMenuSettings.Button.guide.rawValue
 
     var body: some View {
-        Section {
-            Toggle("Navigate MoonLume with a controller", isOn: $enabled)
+        SettingsSection("Controller navigation", id: "controllerNavigation") {
+            SettingToggle("Navigate MoonLume with a controller", id: ControllerNavSettings.enabledKey, isOn: $enabled)
             if enabled {
-                Toggle("Button hints", isOn: $hints)
+                SettingToggle("Button hints", id: ControllerNavSettings.hintsKey, isOn: $hints)
             }
-            QuickMenuButtonPicker(selection: $quickMenuButton)
-        } header: {
-            Theme.label("Controller navigation")
+            SettingRow("Quick menu button", id: QuickMenuSettings.buttonKey) { _ in
+                QuickMenuButtonPicker(selection: $quickMenuButton)
+            }
         } footer: {
             Text("The d-pad or left stick moves through computers, apps and settings: A selects, B goes back, X shows an app's or computer's options, Y or Menu opens Settings, and L1 and R1 switch between the computer list and the apps. Touching the screen hides the focus ring. In a stream, hold the quick menu button for half a second: tilt a stick to pick, let go to choose (Quit needs A), B cancels. A short press still reaches the game. Guide uses Select + Start on controllers without one.")
         }
