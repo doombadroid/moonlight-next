@@ -242,6 +242,11 @@ static float L3_Y;
 }
 
 - (void) setLevel:(OnScreenControlsLevel)level {
+    if (level != _level) {
+        // Hidden controls can't be tapped to release a latched button (a controller connected,
+        // or the tabletop deck took over)
+        [self releaseAllInput];
+    }
     _level = level;
     
     // Only update controls if we're showing, otherwise
@@ -1069,6 +1074,10 @@ static id MNEntryFromStyle(MNControlStyle s) {
 }
 
 - (void) setEditing:(BOOL)editing {
+    if (editing && !_editing) {
+        // Touches go to the editor from now on, so their lifts would never release what they hold
+        [self releaseAllInput];
+    }
     _editing = editing;
     _dragGroup = nil;
     _dragTouch = nil;
@@ -1187,6 +1196,47 @@ static id MNEntryFromStyle(MNControlStyle s) {
     [self setStyle:style forGroup:control];
     [self releaseLatches];
     [self refreshLayout];
+}
+
+// Lets go of everything the controls hold on the host: fingers on buttons, the d-pad and sticks,
+// latched buttons and L3/R3. Used when touches stop reaching the controls (editing starts, the
+// controls are hidden, the app leaves the foreground); the fingers' later lifts then find nothing.
+- (void) releaseAllInput {
+    BOOL anyLatched = NO;
+    for (int i = 0; i < MN_SLIDE_COUNT; i++) {
+        anyLatched = anyLatched || _latched[i];
+    }
+    if (_buttonTouches.count == 0 && !anyLatched && _dpadTouch == nil && _lsTouch == nil && _rsTouch == nil && !l3Set && !r3Set) {
+        // Nothing held: in particular, don't bring back a virtual pad the host was told to drop
+        [_latchTouches removeAllObjects];
+        [_deadTouches removeAllObjects];
+        _l3Touch = _r3Touch = nil;
+        return;
+    }
+    [_buttonTouches removeAllObjects];
+    [_latchTouches removeAllObjects];
+    [_deadTouches removeAllObjects];
+    memset(_latched, 0, sizeof(_latched));
+    [self syncSlideButtons:NULL];
+
+    [self highlightDpad:nil];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _leftStick.position = CGPointMake(LS_CENTER_X, LS_CENTER_Y);
+    _rightStick.position = CGPointMake(RS_CENTER_X, RS_CENTER_Y);
+    [CATransaction commit];
+    [self setLayer:_leftStick highlighted:NO];
+    [self setLayer:_rightStick highlighted:NO];
+    _l3Button.borderWidth = 0.0f;
+    _r3Button.borderWidth = 0.0f;
+    l3Set = r3Set = NO;
+    _dpadTouch = _lsTouch = _rsTouch = _l3Touch = _r3Touch = nil;
+
+    [_controllerSupport clearButtonFlag:_controller
+                                  flags:UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG | LS_CLK_FLAG | RS_CLK_FLAG];
+    [_controllerSupport updateLeftStick:_controller x:0 y:0];
+    [_controllerSupport updateRightStick:_controller x:0 y:0];
+    [_controllerSupport updateFinished:_controller];
 }
 
 // Lets go of every latched button, e.g. when a button stops being tap-to-toggle

@@ -27,6 +27,14 @@
 -(void) initAutoOnScreenControlMode:(OnScreenControls*)osc;
 -(void) cleanup;
 -(Controller*) getOscController;
+// Player 1's other touch sources (the input deck, widgets) and gyro aiming/steering: each is kept
+// apart from the on-screen controls and merged into player 1 when sent, so one can't release what
+// another holds
+-(Controller*) getInputController;
+-(Controller*) getGyroController;
+-(BOOL) reportControllerArrival:(Controller*)controller;
+// Lets go of everything held on the host (the app is leaving the foreground with the stream kept)
+-(void) releaseAllInput;
 
 -(void) updateLeftStick:(Controller*)controller x:(short)x y:(short)y;
 -(void) updateRightStick:(Controller*)controller x:(short)x y:(short)y;

@@ -21,6 +21,8 @@ typedef struct {
 @property (nullable, nonatomic, retain) GCController* gamepad;
 @property (nonatomic)                   int playerIndex;
 @property (nonatomic)                   int lastButtonFlags;
+// A short press replayed to the host (the quick menu's button); added to lastButtonFlags when sent
+@property (nonatomic)                   int tapButtonFlags;
 @property (nonatomic)                   int emulatingButtonFlags;
 @property (nonatomic)                   int supportedEmulationFlags;
 @property (nonatomic)                   unsigned char lastLeftTrigger;
