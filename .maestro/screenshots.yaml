@@ -1,0 +1,97 @@
+# App Store screenshots on an iPhone simulator, in demo mode (-MNDemoMode YES): one made-up
+# PC with MoonLume's own box art, and a still in place of the stream (no network).
+# Run by .github/workflows/sim-screenshots.yml from the output folder.
+appId: com.doombadroid.moonlume
+---
+- launchApp:
+    clearState: true
+    arguments:
+      MNDemoMode: "YES"
+# A cold launch can take a while on the CI simulator.
+- extendedWaitUntil:
+    visible: "Gaming PC"
+    timeout: 60000
+# The PC's page: pushed already when the single PC is selected, else open it.
+- runFlow:
+    when:
+      notVisible: "NOW RUNNING"
+    commands:
+      - tapOn: "Gaming PC"
+- extendedWaitUntil:
+    visible: "NOW RUNNING"
+    timeout: 15000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 01-launcher
+
+# The stream (landscape): on-screen gamepad over the demo frame
+- tapOn: "Resume"
+- extendedWaitUntil:
+    visible: "Stream menu"
+    timeout: 15000
+- waitForAnimationToEnd:
+    timeout: 4000
+- takeScreenshot: 02-stream
+
+- tapOn: "Stream menu"
+- extendedWaitUntil:
+    visible: "Disconnect"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: 03-stream-menu
+
+# Edit Controls, then the widget picker
+- tapOn: "Edit Controls"
+- extendedWaitUntil:
+    visible: "Add widget"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: 04-edit-controls
+- tapOn: "Add widget"
+- extendedWaitUntil:
+    visible: "Add Widget"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: 04b-widget-picker
+- tapOn: "Cancel"
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn: "Cancel"
+- tapOn:
+    text: "Discard Changes"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 2000
+
+# The keyboard & trackpad input deck
+- tapOn: "Stream menu"
+- tapOn: "Keyboard & Trackpad"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 05-input-deck
+
+# Back to the launcher, then Settings (portrait): Controller and Gyro
+- tapOn: "Stream menu"
+- tapOn: "Disconnect"
+- extendedWaitUntil:
+    visible: "NOW RUNNING"
+    timeout: 15000
+- runFlow:
+    when:
+      notVisible: "Settings"
+    commands:
+      - tapOn: "Computers"
+- tapOn: "Settings"
+- extendedWaitUntil:
+    visible: "Done"
+    timeout: 10000
+- scrollUntilVisible:
+    element: "GYRO"
+    direction: DOWN
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: 06-settings-gyro

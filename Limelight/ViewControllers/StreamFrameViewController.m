@@ -97,6 +97,13 @@
     
 #if !TARGET_OS_TV
     [[self revealViewController] setPrimaryViewController:self];
+    if (MNDemo.isOn && !_stageLabel.hidden) {
+        // Demo mode: "connected" as soon as the screen is up, as connectionStarted would
+        _stageLabel.hidden = YES;
+        _tipLabel.hidden = YES;
+        [_spinner stopAnimating];
+        [_streamView showOnScreenControls];
+    }
 #endif
 }
 
@@ -220,11 +227,29 @@
     _tipLabel.textAlignment = NSTextAlignmentCenter;
     _tipLabel.center = CGPointMake(self.view.frame.size.width / 2, self.view.frame.size.height * 0.9);
     
-    _streamMan = [[StreamManager alloc] initWithConfig:self.streamConfig
-                                            renderView:_streamView
-                                   connectionCallbacks:self];
-    NSOperationQueue* opQueue = [[NSOperationQueue alloc] init];
-    [opQueue addOperation:_streamMan];
+#if !TARGET_OS_TV
+    if (MNDemo.isOn) {
+        // Demo mode (App Store screenshots, launched with -MNDemoMode YES): no connection is
+        // made. A still (asset DemoStreamFrame) fills the video area, as a stream at the
+        // default native resolution would; input goes nowhere (common-c drops it unconnected).
+        UIImageView* still = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"DemoStreamFrame"]];
+        still.contentMode = UIViewContentModeScaleAspectFill;
+        still.clipsToBounds = YES;
+        still.userInteractionEnabled = NO;
+        still.frame = _streamView.bounds;
+        still.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        still.layer.zPosition = -1; // under the on-screen controls' layers
+        [_streamView insertSubview:still atIndex:0];
+    }
+    else
+#endif
+    {
+        _streamMan = [[StreamManager alloc] initWithConfig:self.streamConfig
+                                                renderView:_streamView
+                                       connectionCallbacks:self];
+        NSOperationQueue* opQueue = [[NSOperationQueue alloc] init];
+        [opQueue addOperation:_streamMan];
+    }
     
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(applicationWillResignActive:)

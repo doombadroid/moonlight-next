@@ -64,6 +64,17 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
 
     func start() {
         guard !started else { return }
+        if MNDemo.isOn {
+            // Not marked started: foreground/background handling (discovery) stays off
+            let (host, art) = MNDemo.makeHost()
+            for case let app as TemporaryApp in host.appList {
+                if let image = art[app.id ?? ""] { boxArtCache.setObject(image, forKey: boxArtKey(app)) }
+            }
+            hosts = [host]
+            selectedHost = host
+            refreshApps()
+            return
+        }
         started = true
 
         SettingsStore.applyDeviceDefaultsIfNeeded()
@@ -184,6 +195,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
         }
         selectedHost = host
         refreshApps()
+        if MNDemo.isOn { return }
 
         // Offline PCs show their offline page (wake, test network) instead of hanging here
         if host.state == .offline && userInitiated {
@@ -250,7 +262,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
 
     func cancelPairing() {
         pairingPIN = nil
-        discMan.startDiscovery()
+        discMan?.startDiscovery()
     }
 
     func wake(_ host: TemporaryHost) {
@@ -263,6 +275,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
     }
 
     func testNetwork() {
+        if MNDemo.isOn { return demoAlert() }
         busyMessage = "Testing your network…"
         DispatchQueue.global().async {
             let message = MNBridge.runNetworkTest()
@@ -276,6 +289,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
     func addHost(address rawAddress: String) {
         let address = rawAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !address.isEmpty else { return }
+        if MNDemo.isOn { return demoAlert() }
         busyMessage = "Looking for \(address)…"
         DispatchQueue.global(qos: .userInitiated).async {
             self.discMan.discoverHost(address) { host, error in
@@ -300,6 +314,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
     }
 
     func remove(_ host: TemporaryHost) {
+        if MNDemo.isOn { return demoAlert() }
         discMan.removeHost(fromDiscovery: host)
         DataManager().remove(host)
         hosts.removeAll { $0 === host }
@@ -455,6 +470,10 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
     func toggleHidden(_ app: TemporaryApp) {
         guard let host = app.host else { return }
         app.hidden.toggle()
+        if MNDemo.isOn {
+            refreshApps()
+            return
+        }
         // Port of updateAppEntry:forHost:
         host.appList = Set(host.appList)
         DataManager().updateApps(forExisting: host)
@@ -463,7 +482,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
 
     /// Port of appClicked: stream directly unless something else is running.
     func tapped(_ app: TemporaryApp) {
-        appManager.stopRetrieving()
+        appManager?.stopRetrieving()
         if let host = app.host, let running = runningApp(on: host) {
             runningAppChoice = RunningAppChoice(tapped: app, running: running)
         } else {
@@ -473,6 +492,12 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
 
     /// Quits the running app; then streams `next` if given.
     func quitRunningApp(on host: TemporaryHost, thenStream next: TemporaryApp? = nil) {
+        if MNDemo.isOn {
+            host.currentGame = "0"
+            refreshApps()
+            if let next { stream(next) }
+            return
+        }
         busyMessage = "Quitting…"
         DispatchQueue.global().async {
             // Exempt this host from discovery while handling the quit operation
@@ -495,6 +520,16 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
 
     func stream(_ app: TemporaryApp) {
         guard let window, let root = window.rootViewController, let host = app.host else { return }
+        if MNDemo.isOn {
+            // The stream screen shows a still and connects to nothing; nothing is saved
+            host.currentGame = app.id ?? "0"
+            refreshApps()
+            let streamVC = MNBridge.streamController(withConfig: MNBridge.streamConfig(for: app, window: window)) { [weak root] _ in
+                root?.dismiss(animated: true)
+            }
+            present(streamVC, from: root)
+            return
+        }
         appManager.stopRetrieving()
 
         var lastApps = (UserDefaults.standard.dictionary(forKey: Self.lastAppKey) as? [String: String]) ?? [:]
@@ -516,12 +551,20 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
         // The launcher's discovery must not run during the stream
         isStreaming = true
         discMan.stopDiscovery()
+        present(streamVC, from: root)
+    }
+
+    private func present(_ streamVC: UIViewController, from root: UIViewController) {
         // A confirmation dialog or sheet may still be up (or dismissing); clear it first
         if root.presentedViewController != nil {
             root.dismiss(animated: false) { root.present(streamVC, animated: true) }
         } else {
             root.present(streamVC, animated: true)
         }
+    }
+
+    private func demoAlert() {
+        alert = LauncherAlert(title: "Demo Mode", message: "Not available in demo mode.")
     }
 
     // MARK: - Box art (AppAssetCallback)

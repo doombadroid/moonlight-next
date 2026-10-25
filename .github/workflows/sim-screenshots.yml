@@ -1,0 +1,133 @@
+name: Simulator screenshots
+
+# App Store screenshots for the required iPhone size (6.3", 1206x2622: iPhone 16/17/18 Pro),
+# taken in the simulator in demo mode (-MNDemoMode YES: a made-up PC and a still in place of
+# the stream, since CI can't reach a streaming host). Manual only.
+on:
+  workflow_dispatch:
+    inputs:
+      app_run:
+        description: Reuse the simulator app from this earlier run id (skips the build)
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: sim-screenshots
+  cancel-in-progress: true
+
+env:
+  XCODE: '27.1'
+
+jobs:
+  shots:
+    runs-on: xcode-27
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: '${{ env.XCODE }}' }
+
+      - name: Reuse an earlier build
+        if: inputs.app_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.app_run }}" -n moonlume-sim-app -D "$RUNNER_TEMP/app"
+          cd "$RUNNER_TEMP/app" && unzip -q Moonlight.app.zip
+          echo "APP=$RUNNER_TEMP/app/Moonlight.app" >> "$GITHUB_ENV"
+
+      - name: Build for the simulator (Release)
+        if: inputs.app_run == ''
+        run: |
+          xcodebuild -project Moonlight.xcodeproj -scheme Moonlight -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" build CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/sim-build.log" | grep -E '^\*\*|error:' || true
+          app="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/Moonlight.app"
+          test -f "$app/Moonlight"
+          echo "APP=$app" >> "$GITHUB_ENV"
+          (cd "$(dirname "$app")" && zip -qry "$RUNNER_TEMP/Moonlight.app.zip" Moonlight.app)
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.app_run == ''
+        with:
+          name: moonlume-sim-app
+          path: ${{ runner.temp }}/Moonlight.app.zip
+
+      - name: Boot the simulator
+        run: |
+          runtime_ok=$(xcrun simctl list runtimes -j | python3 -c "import json,sys; print(any(r['platform']=='iOS' and r['isAvailable'] for r in json.load(sys.stdin)['runtimes']))")
+          [ "$runtime_ok" = True ] || xcodebuild -downloadPlatform iOS
+          # The newest runtime's newest "iPhone N Pro" (not Pro Max) whose screen is 1206x2622,
+          # read from each device type's profile.plist. A runtime only runs the device types it
+          # lists in supportedDeviceTypes ("Incompatible device" otherwise).
+          read -r type runtime < <(python3 - <<'PY'
+          import json, plistlib, re, subprocess, sys
+          j = lambda *a: json.loads(subprocess.check_output(["xcrun", "simctl", "list", *a, "-j"]))
+          types = {d["identifier"]: d for d in j("devicetypes")["devicetypes"]}
+          def screen(ident):
+              try:
+                  p = plistlib.load(open(types[ident]["bundlePath"] + "/Contents/Resources/profile.plist", "rb"))
+                  return int(p["mainScreenWidth"]), int(p["mainScreenHeight"])
+              except Exception:
+                  return None
+          runtimes = [r for r in j("runtimes")["runtimes"] if r["platform"] == "iOS" and r["isAvailable"]]
+          def num(name):
+              m = re.match(r"iPhone (\d+) Pro$", name)
+              return int(m.group(1)) if m else -1
+          for r in reversed(runtimes):
+              supported = [d for d in r.get("supportedDeviceTypes", []) if d["identifier"] in types]
+              for d in supported:
+                  print(f"{r['identifier']}: {d['name']} {screen(d['identifier'])}", file=sys.stderr)
+              pros = sorted((d for d in supported if num(d["name"]) > 0 and screen(d["identifier"]) == (1206, 2622)), key=lambda d: num(d["name"]))
+              if pros:
+                  print(pros[-1]["identifier"], r["identifier"]); break
+              exact = [d for d in supported if screen(d["identifier"]) == (1206, 2622)]
+              if exact:
+                  print(exact[-1]["identifier"], r["identifier"]); break
+          else:
+              r = runtimes[-1]
+              print([d for d in r["supportedDeviceTypes"] if num(d["name"]) > 0][-1]["identifier"], r["identifier"])
+          PY
+          )
+          echo "::notice::device type $type, runtime $runtime"
+          udid=$(xcrun simctl create shots "$type" "$runtime")
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+          xcrun simctl ui "$udid" appearance dark
+          xcrun simctl install "$udid" "$APP"
+          echo "UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: Install Maestro
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Take the screenshots
+        run: |
+          # takeScreenshot writes plain names relative to the working directory.
+          mkdir -p "$RUNNER_TEMP/shots" && cd "$RUNNER_TEMP/shots"
+          maestro --device "$UDID" test "$GITHUB_WORKSPACE/.maestro/screenshots.yaml"
+          for f in *.png; do echo "$f $(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')"; done
+
+      - name: App log
+        if: always()
+        run: |
+          [ -n "$UDID" ] && xcrun simctl spawn "$UDID" log show --last 15m --predicate 'process == "Moonlight"' --style compact > "$RUNNER_TEMP/shots/app.log" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-screenshots
+          path: |
+            ${{ runner.temp }}/shots
+            ${{ runner.temp }}/sim-build.log
+            ~/.maestro/tests
+          if-no-files-found: warn
