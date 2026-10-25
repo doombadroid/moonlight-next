@@ -3,8 +3,9 @@
 //  MoonLume
 //
 //  The bar shown while rearranging the on-screen controls. Top row: undo, layouts (templates,
-//  saved layouts, import/export), options, Cancel and Save. Second row: size, opacity, hide and
-//  reset for the control you tapped, or the opacity of every control when none is selected.
+//  saved layouts, import/export), options, Cancel and Save. Second row: size, opacity, hide,
+//  tap-to-toggle and reset for the control you tapped, or the opacity of every control when
+//  none is selected.
 //  Selecting, dragging, snapping and the layout data itself live in OnScreenControls.
 //
 
@@ -172,6 +173,7 @@ private struct LayoutEditorBar: View {
     @SwiftUI.State private var newName = ""
     @SwiftUI.State private var importing = false
     @SwiftUI.State private var importError: String?
+    @SwiftUI.State private var confirmingCancel = false
 
     private var osc: OnScreenControls { model.osc }
     private var posture: String { osc.currentPosture() }
@@ -248,7 +250,15 @@ private struct LayoutEditorBar: View {
             }
             .buttonStyle(PillButtonStyle())
             .accessibilityLabel("Options")
-            Button("Cancel", action: onCancel).buttonStyle(PillButtonStyle())
+            Button("Cancel") {
+                // Changes made: ask before throwing them away
+                if osc.canUndo() { confirmingCancel = true } else { onCancel() }
+            }
+            .buttonStyle(PillButtonStyle())
+            .confirmationDialog("Discard your changes to the controls?", isPresented: $confirmingCancel, titleVisibility: .visible) {
+                Button("Discard Changes", role: .destructive, action: onCancel)
+                Button("Keep Editing", role: .cancel) {}
+            }
             Menu {
                 Button("Save for this game") { onSave(true) }
                 Button(hasGameLayout ? "Save for all games (replaces this game's)" : "Save for all games") { onSave(false) }
@@ -347,6 +357,14 @@ private struct LayoutEditorBar: View {
                 }
                 .buttonStyle(RoundIconStyle(active: hidden))
                 .accessibilityLabel(hidden ? "Show control" : "Hide control")
+                if osc.controlSupportsToggle(id) {
+                    let toggle = osc.isControlToggle(id)
+                    Button { osc.setToggle(!toggle, forControl: id) } label: {
+                        Image(systemName: toggle ? "pin.fill" : "pin")
+                    }
+                    .buttonStyle(RoundIconStyle(active: toggle))
+                    .accessibilityLabel(toggle ? "Tap to toggle: on" : "Tap to toggle: off")
+                }
                 Button { osc.resetControl(id) } label: { Image(systemName: "arrow.counterclockwise") }
                     .buttonStyle(RoundIconStyle())
                     .accessibilityLabel("Reset this control")
@@ -379,7 +397,7 @@ private struct LayoutEditorBar: View {
             Slider(value: value, in: range, onEditingChanged: { began in
                 if began { osc.pushUndo() }
             })
-            .frame(width: 104)
+            .frame(width: 96)
             .accessibilityLabel(title)
         }
     }

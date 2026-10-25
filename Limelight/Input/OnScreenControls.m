@@ -52,6 +52,9 @@
     // A finger can roll from one of these onto another.
     NSMapTable<UITouch*, NSNumber*>* _buttonTouches;
     BOOL _slideHeld[MN_SLIDE_COUNT];
+    // Buttons set to tap-to-toggle that are latched down, and the touches that tapped them
+    BOOL _latched[MN_SLIDE_COUNT];
+    NSMutableSet<UITouch*>* _latchTouches;
     BOOL _pressHighlight;
     
     NSDate* l3TouchStart;
@@ -135,6 +138,7 @@ static float L3_Y;
     _controller = [controllerSupport getOscController];
     _deadTouches = [[NSMutableArray alloc] init];
     _buttonTouches = [NSMapTable strongToStrongObjectsMapTable];
+    _latchTouches = [NSMutableSet set];
     id snap = [NSUserDefaults.standardUserDefaults objectForKey:@"mnOSCSnap"];
     _snapToGuides = snap == nil || [snap boolValue];
     _swapABXY = streamConfig.swapABXYButtons;
@@ -735,6 +739,10 @@ static const int MN_SLIDE_FLAGS[MN_SLIDE_COUNT] = { A_FLAG, B_FLAG, X_FLAG, Y_FL
     }
 }
 
+// The layout group each slide-table button belongs to
+static NSString* const MN_SLIDE_GROUPS[MN_SLIDE_COUNT] = { @"abxy", @"abxy", @"abxy", @"abxy", @"start", @"select",
+                                                          @"l1", @"r1", @"l2", @"r2" };
+
 // The slide-table button under a point, or -1
 - (int) slideButtonAt:(CGPoint)p {
     for (int i = 0; i < MN_SLIDE_COUNT; i++) {
@@ -749,7 +757,8 @@ static const int MN_SLIDE_FLAGS[MN_SLIDE_COUNT] = { A_FLAG, B_FLAG, X_FLAG, Y_FL
 // Presses and releases slide-table buttons to match the touches holding them: a button is down
 // while any finger is on it. Returns whether anything changed; counts the new presses.
 - (BOOL) syncSlideButtons:(NSInteger*)newlyPressed {
-    BOOL want[MN_SLIDE_COUNT] = { NO };
+    BOOL want[MN_SLIDE_COUNT];
+    memcpy(want, _latched, sizeof(want));
     for (UITouch* touch in _buttonTouches) {
         want[[_buttonTouches objectForKey:touch].intValue] = YES;
     }
@@ -863,13 +872,15 @@ static int MNGroupIndex(NSString* name) {
     return -1;
 }
 
-// One control's entry in a layout: @[dx, dy] (the original format) or @[dx, dy, scale, opacity,
-// hidden]. Entries come from saved layouts and imported files, so anything odd reads as default.
+// One control's entry in a layout: @[dx, dy] (the original format), @[dx, dy, scale, opacity,
+// hidden] or @[dx, dy, scale, opacity, hidden, toggle]. Entries come from saved layouts and
+// imported files, so anything odd reads as the default.
 typedef struct {
     CGPoint offset;
     CGFloat scale;
     CGFloat opacity;
     BOOL hidden;
+    BOOL toggle; // tap to latch, tap again to release
 } MNControlStyle;
 
 static const CGFloat MN_MIN_SCALE = 0.5;
@@ -890,7 +901,7 @@ static CGFloat MNClamp(double v, CGFloat lo, CGFloat hi, CGFloat fallback) {
 }
 
 static MNControlStyle MNStyleFromEntry(id entry) {
-    MNControlStyle style = { CGPointZero, 1, 1, NO };
+    MNControlStyle style = { CGPointZero, 1, 1, NO, NO };
     if (![entry isKindOfClass:NSArray.class] || [entry count] < 2) {
         return style;
     }
@@ -906,10 +917,16 @@ static MNControlStyle MNStyleFromEntry(id entry) {
         style.opacity = MNClamp(a[3].doubleValue, MN_MIN_OPACITY, 1, 1);
         style.hidden = a[4].boolValue;
     }
+    if (a.count >= 6) {
+        style.toggle = a[5].boolValue;
+    }
     return style;
 }
 
 static id MNEntryFromStyle(MNControlStyle s) {
+    if (s.toggle) {
+        return @[ @(s.offset.x), @(s.offset.y), @(s.scale), @(s.opacity), @(s.hidden), @YES ];
+    }
     if (s.scale == 1 && s.opacity == 1 && !s.hidden) {
         return CGPointEqualToPoint(s.offset, CGPointZero) ? nil : @[ @(s.offset.x), @(s.offset.y) ];
     }
@@ -970,6 +987,7 @@ static id MNEntryFromStyle(MNControlStyle s) {
                           ?: [defaults dictionaryForKey:[self layoutKeyForApp:nil]];
     _layout = saved != nil ? [saved mutableCopy] : [NSMutableDictionary dictionary];
     [_undoStack removeAllObjects];
+    [self releaseLatches];
 }
 
 - (NSMutableDictionary<NSString*, id>*) layout {
@@ -981,6 +999,10 @@ static id MNEntryFromStyle(MNControlStyle s) {
 
 - (MNControlStyle) styleForGroup:(NSString*)name {
     return MNStyleFromEntry([self layout][name]);
+}
+
+- (BOOL) isToggleSlide:(int)i {
+    return [self styleForGroup:MN_SLIDE_GROUPS[i]].toggle;
 }
 
 - (void) setStyle:(MNControlStyle)style forGroup:(NSString*)name {
@@ -1071,6 +1093,7 @@ static id MNEntryFromStyle(MNControlStyle s) {
 - (void) resetLayout {
     [self pushUndo];
     [[self layout] removeAllObjects];
+    [self releaseLatches];
     [self refreshLayout];
 }
 
@@ -1141,9 +1164,40 @@ static id MNEntryFromStyle(MNControlStyle s) {
     [self refreshLayout];
 }
 
+- (BOOL) controlSupportsToggle:(NSString*)control {
+    for (int i = 0; i < MN_SLIDE_COUNT; i++) {
+        if ([MN_SLIDE_GROUPS[i] isEqualToString:control]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (BOOL) isControlToggle:(NSString*)control {
+    return [self styleForGroup:control].toggle;
+}
+
+- (void) setToggle:(BOOL)toggle forControl:(NSString*)control {
+    [self pushUndo];
+    MNControlStyle style = [self styleForGroup:control];
+    style.toggle = toggle && [self controlSupportsToggle:control];
+    [self setStyle:style forGroup:control];
+    [self releaseLatches];
+    [self refreshLayout];
+}
+
+// Lets go of every latched button, e.g. when a button stops being tap-to-toggle
+- (void) releaseLatches {
+    memset(_latched, 0, sizeof(_latched));
+    if ([self syncSlideButtons:NULL]) {
+        [_controllerSupport updateFinished:_controller];
+    }
+}
+
 - (void) resetControl:(NSString*)control {
     [self pushUndo];
     [[self layout] removeObjectForKey:control];
+    [self releaseLatches];
     [self refreshLayout];
 }
 
@@ -1185,6 +1239,7 @@ static id MNEntryFromStyle(MNControlStyle s) {
     }
     _layout = [_undoStack.lastObject mutableCopy];
     [_undoStack removeLastObject];
+    [self releaseLatches];
     [self refreshLayout];
 }
 
@@ -1195,6 +1250,7 @@ static id MNEntryFromStyle(MNControlStyle s) {
 - (void) applyLayoutDictionary:(NSDictionary<NSString*, id>*)layout {
     [self pushUndo];
     _layout = [layout mutableCopy];
+    [self releaseLatches];
     [self refreshLayout];
 }
 
@@ -1419,12 +1475,12 @@ static id MNEntryFromStyle(MNControlStyle s) {
             // button, the last one stays held, so a thumb drifting into a gap doesn't drop it.
             // A touch that landed in the dead space around the buttons picks one up the same way.
             int i = [self slideButtonAt:touchLocation];
-            if (i >= 0) {
+            if (i >= 0 && ![self isToggleSlide:i]) {
                 [_buttonTouches setObject:@(i) forKey:touch];
                 [_deadTouches removeObject:touch];
             }
             buttonTouch = true;
-        } else if (touch == _l3Touch || touch == _r3Touch) {
+        } else if (touch == _l3Touch || touch == _r3Touch || [_latchTouches containsObject:touch]) {
             buttonTouch = true;
         }
         if ([_deadTouches containsObject:touch]) {
@@ -1456,7 +1512,14 @@ static id MNEntryFromStyle(MNControlStyle s) {
         CALayer* dpad = nil;
         int slide = [self slideButtonAt:touchLocation];
         
-        if (slide >= 0) {
+        if (slide >= 0 && [self isToggleSlide:slide]) {
+            // Tap-to-toggle: each tap latches or releases the button
+            _latched[slide] = !_latched[slide];
+            [_latchTouches addObject:touch];
+            if (!_latched[slide]) {
+                [self pressHaptic];
+            }
+        } else if (slide >= 0) {
             [_buttonTouches setObject:@(slide) forKey:touch];
         } else if ((dpad = [self dpadLayerAt:touchLocation]) != nil) {
             [_controllerSupport setButtonFlag:_controller flags:[self flagForDpadLayer:dpad]];
@@ -1542,6 +1605,9 @@ static id MNEntryFromStyle(MNControlStyle s) {
     for (UITouch* touch in touches) {
         if ([_buttonTouches objectForKey:touch] != nil) {
             [_buttonTouches removeObjectForKey:touch];
+            touched = true;
+        } else if ([_latchTouches containsObject:touch]) {
+            [_latchTouches removeObject:touch];
             touched = true;
         } else if (touch == _dpadTouch) {
             [_controllerSupport clearButtonFlag:_controller

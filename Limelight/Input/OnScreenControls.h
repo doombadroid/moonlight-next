@@ -43,7 +43,7 @@ typedef NS_ENUM(NSInteger, OnScreenControlsLevel) {
 // Layout editor: while editing, touches select and drag controls instead of pressing them.
 // Layouts are kept per posture (folded, phone landscape, unfolded) and either per game or for
 // all games. A layout is a property list: control id -> @[dx, dy] or @[dx, dy, scale, opacity,
-// hidden], plus @"opacity" -> NSNumber for every control. Keys this build doesn't know are kept
+// hidden(, toggle)], plus @"opacity" -> NSNumber for every control. Keys this build doesn't know are kept
 // as they are, so other kinds of control can store their own entries in the same layout.
 - (void) setEditing:(BOOL)editing;
 - (BOOL) isEditing;
@@ -66,6 +66,10 @@ typedef NS_ENUM(NSInteger, OnScreenControlsLevel) {
 - (BOOL) isControlHidden:(NSString*)control NS_SWIFT_NAME(isControlHidden(_:));
 - (void) setHidden:(BOOL)hidden forControl:(NSString*)control NS_SWIFT_NAME(setHidden(_:forControl:));
 - (void) resetControl:(NSString*)control NS_SWIFT_NAME(resetControl(_:));
+// Tap-to-toggle: a tap latches the button, the next releases it (face, shoulder, Start, Select)
+- (BOOL) controlSupportsToggle:(NSString*)control NS_SWIFT_NAME(controlSupportsToggle(_:));
+- (BOOL) isControlToggle:(NSString*)control NS_SWIFT_NAME(isControlToggle(_:));
+- (void) setToggle:(BOOL)toggle forControl:(NSString*)control NS_SWIFT_NAME(setToggle(_:forControl:));
 @property (nonatomic) CGFloat globalOpacity;
 @property (nonatomic) BOOL snapToGuides;
 // Slider setters don't record undo steps on their own: call pushUndo once when a slider drag
