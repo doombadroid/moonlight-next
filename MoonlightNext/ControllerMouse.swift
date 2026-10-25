@@ -10,6 +10,7 @@
 
 import GameController
 import QuartzCore
+import UIKit
 
 enum ControllerMouseSettings {
     enum Clicks: Int { case faceButtons = 0, shoulders = 1, triggers = 2 }
@@ -100,6 +101,12 @@ enum ControllerMouseSettings {
             stop()
             return
         }
+        guard UIApplication.shared.applicationState == .active else {
+            // In the background (the stream kept alive) the pad's values freeze: don't keep moving
+            // or holding a click with them
+            pause()
+            return
+        }
         let now = CACurrentMediaTime()
         let dt = lastTick > 0 ? min(now - lastTick, 0.05) : 0
         lastTick = now
@@ -153,6 +160,12 @@ enum ControllerMouseSettings {
         guard length > deadZone else { return (0, 0) }
         let scaled = pow((min(length, 1) - deadZone) / (1 - deadZone), exponent)
         return (x / length * scaled, y / length * scaled)
+    }
+
+    private func pause() {
+        releaseButtons()
+        remainder = (0, 0, 0, 0)
+        lastTick = 0
     }
 
     private func releaseButtons() {

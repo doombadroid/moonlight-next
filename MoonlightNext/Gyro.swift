@@ -231,6 +231,14 @@ enum GyroSettings {
     }
 
     private func tick() {
+        guard UIApplication.shared.applicationState == .active else {
+            // In the background (kept alive, picture in picture) the phone moving in a pocket
+            // mustn't aim or steer: let go once and wait
+            releaseSticks()
+            remainder = (0, 0)
+            lastTick = 0
+            return
+        }
         let now = CACurrentMediaTime()
         let dt = lastTick > 0 ? min(now - lastTick, 0.05) : 0
         lastTick = now

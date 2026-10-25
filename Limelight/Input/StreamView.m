@@ -789,6 +789,24 @@ typedef struct {
     }
 }
 
+// Keys held as the app leaves the foreground (the stream may stay connected there) are cancelled,
+// not ended: release them on the host too
+- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    BOOL handled = NO;
+    
+    if (@available(iOS 13.4, tvOS 13.4, *)) {
+        for (UIPress* press in presses) {
+            if ([KeyboardSupport sendKeyEventForPress:press down:NO]) {
+                handled = YES;
+            }
+        }
+    }
+    
+    if (!handled) {
+        [super pressesCancelled:presses withEvent:event];
+    }
+}
+
 - (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
     if ([self handleMouseButtonEvent:BUTTON_ACTION_RELEASE
                           forTouches:touches

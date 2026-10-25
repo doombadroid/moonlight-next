@@ -939,6 +939,16 @@ static os_log_t DuoLog(void) {
     }
     
 #if !TARGET_OS_TV
+    // The stream can stay connected in the background (keep-alive, picture in picture), where no
+    // release would ever come: let go of every held button, key and stick on the host now.
+    // Keyboard keys are released by StreamView's pressesCancelled, gyro aiming and controller
+    // mouse pause themselves while the app isn't active.
+    [[_streamView layoutControls] releaseAllInput];
+    [_controllerSupport releaseAllInput];
+    for (int button = BUTTON_LEFT; button <= BUTTON_X2; button++) {
+        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, button);
+    }
+
     // Terminate the stream if the app is inactive for 60 seconds
     Log(LOG_I, @"Starting inactivity termination timer");
     _inactivityTimer = [NSTimer scheduledTimerWithTimeInterval:60

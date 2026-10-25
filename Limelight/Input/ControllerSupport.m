@@ -1426,6 +1426,32 @@ static void LiftStick(short* x, short* y, double minimum)
     return self;
 }
 
+-(void) releaseAllInput
+{
+    // The on-screen controls release their own (OnScreenControls releaseAllInput); a physical pad
+    // reports its real state again on its next change
+    NSArray<Controller*>* pads = [_controllers allValues];
+    for (Controller* controller in [pads arrayByAddingObjectsFromArray:@[_inputController, _gyroController]]) {
+        @synchronized(controller) {
+            controller.lastButtonFlags = 0;
+            controller.emulatingButtonFlags = 0;
+            controller.tapButtonFlags = 0;
+            controller.lastLeftTrigger = 0;
+            controller.lastRightTrigger = 0;
+            controller.lastLeftStickX = 0;
+            controller.lastLeftStickY = 0;
+            controller.lastRightStickX = 0;
+            controller.lastRightStickY = 0;
+        }
+    }
+    for (Controller* controller in pads) {
+        [self updateFinished:controller];
+    }
+    if (_oscController.reportedArrival) {
+        [self updateFinished:_oscController];
+    }
+}
+
 -(void) connectionEstablished
 {
     for (Controller* controller in [_controllers allValues]) {
