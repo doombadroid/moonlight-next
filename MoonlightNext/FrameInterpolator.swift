@@ -36,6 +36,11 @@ import os
     private var engine: AnyObject? // Engine; iOS 26 only, so it's kept untyped here
     private var engineSize = (0, 0)
     private let log = Logger(subsystem: "com.doombadroid.moonlightnext", category: "interpolation")
+    /// Frames submitted but not yet processed. Decoding never waits for the interpolator, so when it
+    /// falls behind (thermal throttling, GPU work refused in the background) frames pass straight
+    /// through instead of piling up, with their latency and decoder buffers, on the queue.
+    private var backlog = 0
+    private let backlogLock = NSLock()
 
     @objc init(output: @escaping Output) {
         self.output = output
@@ -43,7 +48,22 @@ import os
 
     /// Queues a decoded frame. restart: frames before this one don't lead into it (an IDR frame).
     @objc func submit(_ frame: CMSampleBuffer, restart: Bool) {
-        queue.async { self.process(frame, restart: restart) }
+        backlogLock.lock()
+        backlog += 1
+        let behind = backlog > 2
+        backlogLock.unlock()
+        queue.async {
+            if behind {
+                // The next frame doesn't follow on from this one's predecessor: no drawn frame
+                self.previousPTS = .invalid
+                self.output(frame, false)
+            } else {
+                self.process(frame, restart: restart)
+            }
+            self.backlogLock.lock()
+            self.backlog -= 1
+            self.backlogLock.unlock()
+        }
     }
 
     @objc func stop() {
