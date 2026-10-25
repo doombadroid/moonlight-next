@@ -95,4 +95,8 @@ static __weak ControllerSupport* sControllerSupport;
     [cs updateFinished:controller];
 }
 
++ (BOOL) aimTriggerHeld {
+    return [sControllerSupport getOscController].lastLeftTrigger > 64;
+}
+
 @end

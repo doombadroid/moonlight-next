@@ -47,6 +47,10 @@ typedef NS_ENUM(int, MNMouseButton) {
 + (void) gamepadLeftTrigger:(uint8_t)left;
 + (void) gamepadRightTrigger:(uint8_t)right;
 
+// L2 / left trigger held on the on-screen controller (on-screen controls or the deck); gyro
+// aiming can be limited to this, aim-down-sights style.
++ (BOOL) aimTriggerHeld;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -137,6 +137,7 @@
     [_streamView setupStreamView:_controllerSupport interactionDelegate:self config:self.streamConfig];
 #if !TARGET_OS_TV
     [MNInput setControllerSupport:_controllerSupport];
+    [MNGyro.shared startIn:self.view];
 #endif
     
 #if TARGET_OS_TV
@@ -320,7 +321,14 @@
         }];
         quitAction.attributes = UIMenuElementAttributesDestructive;
         BOOL deckShown = strongSelf->_deckController != nil && !strongSelf->_deckController.view.hidden;
-        completion(@[
+        NSMutableArray<UIMenuElement*>* gyroItems = [NSMutableArray array];
+        if (MNGyro.isConfigured) {
+            [gyroItems addObject:[UIAction actionWithTitle:MNGyro.isPaused ? @"Resume Gyro Aiming" : @"Pause Gyro Aiming"
+                                                     image:[UIImage systemImageNamed:@"gyroscope"]
+                                                identifier:nil
+                                                   handler:^(UIAction* action) { MNGyro.isPaused = !MNGyro.isPaused; }]];
+        }
+        completion([gyroItems arrayByAddingObjectsFromArray:@[
             [UIAction actionWithTitle:deckShown ? @"Hide Keyboard & Trackpad" : @"Keyboard & Trackpad"
                                 image:[UIImage systemImageNamed:@"keyboard"]
                            identifier:nil
@@ -334,7 +342,7 @@
                            identifier:nil
                               handler:^(UIAction* action) { [weakSelf returnToMainFrame]; }],
             quitAction,
-        ]);
+        ]]);
     }]]];
 
     [self.view addSubview:_menuButton];
@@ -529,6 +537,7 @@ static os_log_t DuoLog(void) {
     }
     _tornDown = YES;
 #if !TARGET_OS_TV
+    [MNGyro.shared stop];
     [MNInput setControllerSupport:nil];
 #endif
 
