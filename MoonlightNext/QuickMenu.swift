@@ -76,7 +76,8 @@ enum QuickMenuGeometry {
 @objc final class MNQuickMenu: NSObject {
     @objc static let shared = MNQuickMenu()
 
-    private enum Phase { case idle, holding, open, draining }
+    /// passing: the button joined a chord with another button, so it goes to the game until released
+    private enum Phase { case idle, holding, open, draining, passing }
 
     /// How long the button is held before the menu opens
     private let holdTime = 0.45
@@ -91,6 +92,24 @@ enum QuickMenuGeometry {
     private var tap: Int32 = 0
     private var shown: [MNQuickMenuItem] = []
     private var selection: Int?
+
+    private override init() {
+        super.init()
+        // Only the pad that opened the menu can close it: if it goes away (battery, Bluetooth),
+        // reset instead of leaving the wheel up or the menu stuck for the rest of the stream
+        NotificationCenter.default.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] note in
+            guard let self, self.phase != .idle else { return }
+            let gone = (note.object as? GCController)?.extendedGamepad
+            if self.pad == nil || gone == nil || gone === self.pad {
+                self.reset()
+            }
+        }
+    }
+
+    private func reset() {
+        close()
+        phase = .idle
+    }
 
     /// The stream started: `items` builds the wheel each time it opens.
     @objc func attach(_ stream: UIViewController, items: @escaping () -> [MNQuickMenuItem]) {
@@ -116,6 +135,9 @@ enum QuickMenuGeometry {
             }
             return -1
         }
+        if phase != .idle && pad == nil {
+            reset()
+        }
         switch phase {
         case .open:
             guard gamepad === pad else { return 0 }
@@ -138,9 +160,22 @@ enum QuickMenuGeometry {
             }
             phase = .idle
             return 0
+        case .passing:
+            guard gamepad === pad else { return 0 }
+            if !trigger.buttons.contains(where: \.isPressed) {
+                phase = .idle
+            }
+            return 0
         case .holding:
             guard gamepad === pad else { return 0 }
             if trigger.buttons.allSatisfy(\.isPressed) {
+                if otherButtonPressed(gamepad) {
+                    // A chord on the host (Guide + RB in Steam): give the game the button now
+                    hold?.cancel()
+                    hold = nil
+                    phase = .passing
+                    return 0
+                }
                 return trigger.flags
             }
             // Let go before the menu opened: the game gets the press after all
@@ -171,6 +206,20 @@ enum QuickMenuGeometry {
         return tap
     }
 
+    private func otherButtonPressed(_ gamepad: GCExtendedGamepad) -> Bool {
+        let buttons: [GCControllerButtonInput?] = [
+            gamepad.buttonA, gamepad.buttonB, gamepad.buttonX, gamepad.buttonY,
+            gamepad.leftShoulder, gamepad.rightShoulder, gamepad.leftTrigger, gamepad.rightTrigger,
+            gamepad.dpad.up, gamepad.dpad.down, gamepad.dpad.left, gamepad.dpad.right,
+            gamepad.leftThumbstickButton, gamepad.rightThumbstickButton,
+            gamepad.buttonMenu, gamepad.buttonOptions, gamepad.buttonHome,
+        ]
+        return buttons.contains { button in
+            guard let button, button.isPressed else { return false }
+            return !trigger.buttons.contains { $0 === button }
+        }
+    }
+
     private func resolveTrigger(_ pad: GCExtendedGamepad) -> (buttons: [GCControllerButtonInput], flags: Int32, replayTap: Bool)? {
         // SPECIAL_FLAG, PLAY_FLAG, BACK_FLAG
         let special: Int32 = 0x0400, play: Int32 = 0x0010, back: Int32 = 0x0020
@@ -195,7 +244,13 @@ enum QuickMenuGeometry {
     }
 
     private func open() {
-        guard phase == .holding, let pad, trigger.buttons.allSatisfy(\.isPressed),
+        guard phase == .holding else { return }
+        guard let pad else {
+            // The pad went away while the button was held
+            reset()
+            return
+        }
+        guard trigger.buttons.allSatisfy(\.isPressed),
               let stream = MNControllerNav.shared.streamController, stream.presentedViewController == nil,
               let window = MNControllerNav.shared.window, let items else { return }
         shown = items()

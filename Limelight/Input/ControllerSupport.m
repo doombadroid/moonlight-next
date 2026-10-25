@@ -463,7 +463,7 @@ static void LiftStick(short* x, short* y, double minimum)
         
         // Only send controller events if we successfully reported controller arrival
         if ([self reportControllerArrival:controller]) {
-            uint32_t buttonFlags = controller.lastButtonFlags;
+            uint32_t buttonFlags = controller.lastButtonFlags | controller.tapButtonFlags;
             uint8_t leftTrigger = controller.lastLeftTrigger;
             uint8_t rightTrigger = controller.lastRightTrigger;
             int16_t leftStickX = controller.lastLeftStickX;
@@ -473,7 +473,7 @@ static void LiftStick(short* x, short* y, double minimum)
             
             // If this is merged with another controller, combine the inputs
             if (controller.mergedWithController) {
-                buttonFlags |= controller.mergedWithController.lastButtonFlags;
+                buttonFlags |= controller.mergedWithController.lastButtonFlags | controller.mergedWithController.tapButtonFlags;
                 leftTrigger = MAX(leftTrigger, controller.mergedWithController.lastLeftTrigger);
                 rightTrigger = MAX(rightTrigger, controller.mergedWithController.lastRightTrigger);
                 leftStickX = MAX_MAGNITUDE(leftStickX, controller.mergedWithController.lastLeftStickX);
@@ -892,7 +892,9 @@ static void LiftStick(short* x, short* y, double minimum)
                 // Quick menu: flags of its held button to keep from the host, or -1 for the whole pad
                 int quickMenuHidden = [MNQuickMenu.shared intercept:gamepad];
                 if (quickMenuHidden < 0 || [MNControllerMouse.shared intercept:gamepad]) {
-                    // Controller mouse mode or the quick menu: the game sees this pad idle
+                    // Controller mouse mode or the quick menu: the game sees this pad idle, so a
+                    // short press of the menu button isn't replayed either (later, on another pad)
+                    [MNQuickMenu.shared takeTap];
                     if (limeController.lastButtonFlags || limeController.lastLeftTrigger || limeController.lastRightTrigger ||
                         limeController.lastLeftStickX || limeController.lastLeftStickY ||
                         limeController.lastRightStickX || limeController.lastRightStickY) {
@@ -1021,13 +1023,18 @@ static void LiftStick(short* x, short* y, double minimum)
                 [self updateFinished:limeController];
 #if !TARGET_OS_TV
                 // A short press of the quick menu button: send it to the host as a tap after all
+                // Held apart from the pad's own flags, which the pad's next report (stick noise)
+                // would otherwise clear within milliseconds
                 int tapFlags = [MNQuickMenu.shared takeTap];
                 if (tapFlags != 0) {
-                    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-                        [self setButtonFlag:limeController flags:tapFlags];
-                        [self updateFinished:limeController];
-                        usleep(100 * 1000);
-                        [self clearButtonFlag:limeController flags:tapFlags];
+                    @synchronized(limeController) {
+                        limeController.tapButtonFlags |= tapFlags;
+                    }
+                    [self updateFinished:limeController];
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(100 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+                        @synchronized(limeController) {
+                            limeController.tapButtonFlags &= ~tapFlags;
+                        }
                         [self updateFinished:limeController];
                     });
                 }
