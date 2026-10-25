@@ -44,6 +44,18 @@ Half-folded (tabletop), with the keyboard and trackpad deck or the gamepad deck 
 <img src="docs/screenshots/duo-tabletop-gamepad.webp" alt="The half-folded iPhone Duo streaming SuperTuxKart above the gamepad deck" width="49%">
 </p>
 
+Standard iPhone (preview from the simulator's demo mode; final art still to come):
+
+<p>
+<img src="docs/screenshots/iphone/01-launcher.webp" alt="MoonLume's launcher on an iPhone, showing a PC and its games" height="420">
+<img src="docs/screenshots/iphone/02-stream-land.webp" alt="A stream on an iPhone in landscape with the on-screen gamepad" height="200">
+<img src="docs/screenshots/iphone/04-edit-controls-land.webp" alt="Edit Controls on an iPhone: the layout editor bar over the on-screen gamepad" height="200">
+</p>
+<p>
+<img src="docs/screenshots/iphone/04b-widget-picker-land.webp" alt="The Add Widget picker on an iPhone" height="200">
+<img src="docs/screenshots/iphone/05-input-deck-land.webp" alt="The keyboard and trackpad deck on an iPhone" height="200">
+</p>
+
 <details>
 <summary>App Store screenshots (iPhone Duo)</summary>
 
