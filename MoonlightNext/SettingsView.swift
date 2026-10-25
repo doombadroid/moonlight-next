@@ -402,6 +402,7 @@ struct SettingsView: View {
                     Text("Scrolling and pinch apply to the touchpad mode and the keyboard deck's trackpad: tap, then hold to drag; two fingers scroll; pinch sends Ctrl + wheel to zoom. The keyboard tap opens the on-screen keyboard. A captured mouse moves the host pointer relatively, for games; hidden or visible send the pointer's position, for the desktop. With a hardware keyboard, Ctrl+Alt+Shift with D disconnects, Q quits the app, S opens settings, O shows stats, M frees or captures the mouse and C shows or hides the pointer.\(inStream ? " The mouse pointer setting applies the next time you connect." : "")")
                 }
 
+                TouchExtrasSettings()
                 ControllerSettingsSections()
 
                 ControllerNavigationSection()
