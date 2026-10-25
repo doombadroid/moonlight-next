@@ -16,7 +16,6 @@
 import CoreMotion
 import GameController
 import UIKit
-import os
 
 enum GyroSettings {
     enum Mode: Int { case off = 0, mouse = 1, rightStick = 2 }
@@ -231,13 +230,7 @@ enum GyroSettings {
         }
     }
 
-    private var ticksSinceLog = 0
-    private var mouseSinceLog = (x: 0, y: 0)
-    private var lastAimGate = "none"
-
     private func tick() {
-        ticksSinceLog += 1
-        logAxes(motion.deviceMotion, now: CACurrentMediaTime())
         guard UIApplication.shared.applicationState == .active else {
             // In the background (kept alive, picture in picture) the phone moving in a pocket
             // mustn't aim or steer: let go once and wait
@@ -259,46 +252,45 @@ enum GyroSettings {
         steer(device)
     }
 
-    // MARK: Diagnostics
-
-    private static let axesLog = Logger(subsystem: "com.doombadroid.moonlightnext", category: "gyro")
-    private var lastAxesLog = 0.0
-
-    /// Once a second while gyro runs: what the window thinks its orientation is, how the screen's
-    /// right/down map into the screen's fixed (panel) space, and the raw gravity and rotation in
-    /// CoreMotion's device frame. Used to check the axis mapping on each Duo display.
-    private func logAxes(_ device: CMDeviceMotion?, now: Double) {
-        guard now - lastAxesLog >= 1 else { return }
-        lastAxesLog = now
-        let ticks = ticksSinceLog, moved = mouseSinceLog
-        ticksSinceLog = 0; mouseSinceLog = (0, 0)
-        Self.axesLog.notice("gate ticks/s=\(ticks, privacy: .public) mouse=(\(moved.x, privacy: .public),\(moved.y, privacy: .public)) app=\(UIApplication.shared.applicationState.rawValue, privacy: .public) motionActive=\(self.motion.isDeviceMotionActive, privacy: .public) \(self.lastAimGate, privacy: .public)")
-        guard let device, let window = view?.window, let scene = window.windowScene else { return }
-        let screen = scene.screen
-        let origin = window.convert(CGPoint.zero, to: screen.fixedCoordinateSpace)
-        let rightPt = window.convert(CGPoint(x: 100, y: 0), to: screen.fixedCoordinateSpace)
-        let downPt = window.convert(CGPoint(x: 0, y: 100), to: screen.fixedCoordinateSpace)
-        let g = device.gravity, r = device.rotationRate
-        let axes = screenAxes()
-        let message = "axes orient=\(scene.interfaceOrientation.rawValue) win=\(Int(window.bounds.width))x\(Int(window.bounds.height)) fixed=\(Int(screen.fixedCoordinateSpace.bounds.width))x\(Int(screen.fixedCoordinateSpace.bounds.height)) native=\(Int(screen.nativeBounds.width))x\(Int(screen.nativeBounds.height)) rightInFixed=(\(Int(rightPt.x - origin.x)),\(Int(rightPt.y - origin.y))) downInFixed=(\(Int(downPt.x - origin.x)),\(Int(downPt.y - origin.y))) mappedRight=(\(axes.right.x),\(axes.right.y)) g=(\(String(format: "%.2f,%.2f,%.2f", g.x, g.y, g.z))) r=(\(String(format: "%.2f,%.2f,%.2f", r.x, r.y, r.z)))"
-        Self.axesLog.notice("\(message, privacy: .public)")
-    }
-
     // MARK: Host motion
 
-    /// The screen's right and down directions in the device's own (portrait) axes.
+    /// The screen's right and down directions in CoreMotion's device frame.
+    ///
+    /// UIKit gives them in the screen's fixed (portrait) coordinate space, which already accounts
+    /// for the interface orientation. That space then maps onto the device frame, where CoreMotion
+    /// reports gravity and rotation: x right and y up along a normal iPhone's portrait screen.
+    /// The iPhone Duo's inner display is mounted a quarter turn from that frame, so the same
+    /// orientation means different device axes on each display (measured 10/25: unfolded in
+    /// landscapeLeft, gravity reads (0, -0.98, -0.2) with screen down along fixed +x).
     private func screenAxes() -> (right: (x: Double, y: Double), down: (x: Double, y: Double)) {
-        // UIInterfaceOrientation.landscapeLeft has the home edge on the left, so the device's
-        // top (+y) points right; landscapeRight is the reverse
-        let right: (x: Double, y: Double)
-        switch view?.window?.windowScene?.interfaceOrientation {
-        case .landscapeLeft: right = (0, 1)
-        case .landscapeRight: right = (0, -1)
-        case .portraitUpsideDown: right = (-1, 0)
-        default: right = (1, 0)
+        guard let window = view?.window, let screen = window.windowScene?.screen else {
+            return ((0, 1), (1, 0)) // landscapeLeft on a normal iPhone
         }
-        // down = right × screen normal (+z)
-        return (right, (right.y, -right.x))
+        let fixed = screen.fixedCoordinateSpace
+        let o = window.convert(CGPoint.zero, to: fixed)
+        let r = window.convert(CGPoint(x: 1, y: 0), to: fixed)
+        let d = window.convert(CGPoint(x: 0, y: 1), to: fixed)
+        let right = Self.fixedToDevice(Double(r.x - o.x), Double(r.y - o.y), screen: screen)
+        let down = Self.fixedToDevice(Double(d.x - o.x), Double(d.y - o.y), screen: screen)
+        return (right, down)
+    }
+
+    /// A direction in the screen's fixed space (x right, y down, portrait) in device axes.
+    static func fixedToDevice(_ x: Double, _ y: Double, screen: UIScreen) -> (x: Double, y: Double) {
+        if isRotatedPanel(screen) {
+            // Fixed +x is device -y and fixed +y is device -x
+            return (-y, -x)
+        }
+        // Fixed +x is device +x; fixed y grows down while device y grows up
+        return (x, -y)
+    }
+
+    /// The iPhone Duo's inner display (2007x2853 native pixels, the fold across its fixed
+    /// portrait) is the one display whose panel is turned relative to the motion sensors.
+    // ponytail: matched by native size; switch to a platform API if one reports panel rotation
+    static func isRotatedPanel(_ screen: UIScreen) -> Bool {
+        let n = screen.nativeBounds.size
+        return Int(n.width) == 2007 && Int(n.height) == 2853
     }
 
     /// Host motion follows SDL's controller axes: x to the right, y up out of the pad's face,
@@ -333,7 +325,6 @@ enum GyroSettings {
         let mode = aimMode
         // With a gyro button on screen, holding it is what turns aiming on
         let allowed = aimWidgetShown ? widgetAim != nil : (!MNGyro.isPaused && buttonAllows && triggerAllows())
-        lastAimGate = "mode=\(mode.rawValue) allowed=\(allowed) paused=\(MNGyro.isPaused) button=\(buttonAllows) trigger=\(triggerAllows()) widgetShown=\(aimWidgetShown) widgetAim=\(widgetAim != nil) pauses=\(widgetPauses) device=\(device != nil) source=\(GyroSettings.source.rawValue)"
         guard mode != .off, allowed, widgetPauses == 0, let rates = aimRates(device) else {
             releaseStick()
             return
@@ -357,7 +348,6 @@ enum GyroSettings {
             let sx = dx.rounded(.towardZero), sy = dy.rounded(.towardZero)
             remainder = (dx - sx, dy - sy)
             MNInput.mouseMoveX(Int16(clamping: Int(sx)), y: Int16(clamping: Int(sy)))
-            mouseSinceLog.x += Int(sx); mouseSinceLog.y += Int(sy)
         case .rightStick:
             // stick y is up-positive
             let stick = MNGyro.shapeStick(x: horizontal * stickPerRadianPerSecond, y: -vertical * stickPerRadianPerSecond, minimum: GyroSettings.minStick)
