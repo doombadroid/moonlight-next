@@ -16,6 +16,7 @@
 import CoreMotion
 import GameController
 import UIKit
+import os
 
 enum GyroSettings {
     enum Mode: Int { case off = 0, mouse = 1, rightStick = 2 }
@@ -244,12 +245,33 @@ enum GyroSettings {
         lastTick = now
         let device = motion.deviceMotion
         let buttonAllows = pollGyroButton()
+        logAxes(device, now: now)
 
         if let device, hostWantsMotion {
             sendHostMotion(device, gyroOn: buttonAllows && !MNGyro.isPaused)
         }
         aim(device, dt: dt, buttonAllows: buttonAllows)
         steer(device)
+    }
+
+    // MARK: Diagnostics
+
+    private static let axesLog = Logger(subsystem: "com.doombadroid.moonlightnext", category: "gyro")
+    private var lastAxesLog = 0.0
+
+    /// Once a second while gyro runs: what the window thinks its orientation is, how the screen's
+    /// right/down map into the screen's fixed (panel) space, and the raw gravity and rotation in
+    /// CoreMotion's device frame. Used to check the axis mapping on each Duo display.
+    private func logAxes(_ device: CMDeviceMotion?, now: Double) {
+        guard let device, now - lastAxesLog >= 1, let window = view?.window, let scene = window.windowScene else { return }
+        lastAxesLog = now
+        let screen = scene.screen
+        let origin = window.convert(CGPoint.zero, to: screen.fixedCoordinateSpace)
+        let rightPt = window.convert(CGPoint(x: 100, y: 0), to: screen.fixedCoordinateSpace)
+        let downPt = window.convert(CGPoint(x: 0, y: 100), to: screen.fixedCoordinateSpace)
+        let g = device.gravity, r = device.rotationRate
+        let axes = screenAxes()
+        Self.axesLog.info("axes orient=\(scene.interfaceOrientation.rawValue) win=\(Int(window.bounds.width))x\(Int(window.bounds.height)) fixed=\(Int(screen.fixedCoordinateSpace.bounds.width))x\(Int(screen.fixedCoordinateSpace.bounds.height)) native=\(Int(screen.nativeBounds.width))x\(Int(screen.nativeBounds.height)) rightInFixed=(\(Int(rightPt.x - origin.x)),\(Int(rightPt.y - origin.y))) downInFixed=(\(Int(downPt.x - origin.x)),\(Int(downPt.y - origin.y))) mappedRight=(\(axes.right.x),\(axes.right.y)) g=(\(String(format: "%.2f,%.2f,%.2f", g.x, g.y, g.z))) r=(\(String(format: "%.2f,%.2f,%.2f", r.x, r.y, r.z)))", privacy: .public)
     }
 
     // MARK: Host motion
