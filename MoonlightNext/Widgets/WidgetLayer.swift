@@ -63,6 +63,9 @@ import UIKit
         // Folders
         var dockTimer: Timer?
         var docked = false
+        // Mouse pads and scroll strips
+        var touchpad: MNTouchpad?
+        var scrollRemainder: CGFloat = 0
     }
 
     // MARK: Editing state
@@ -346,6 +349,10 @@ import UIKit
             let p = touch.location(in: self)
             guard let w = widgetAt(p) else { continue }
             touchOwners[ObjectIdentifier(touch)] = w.id
+            if w.kind == .mousePad {
+                touchpad(w).touchesBegan([touch])
+                continue
+            }
             touchBegan(w, at: p)
         }
     }
@@ -357,6 +364,10 @@ import UIKit
         }
         for touch in touches {
             guard let id = touchOwners[ObjectIdentifier(touch)], let w = widget(id) else { continue }
+            if w.kind == .mousePad {
+                live[id]?.touchpad?.touchesMoved([touch])
+                continue
+            }
             let p = touch.location(in: self)
             if w.kind == .button, w.slide, !w.toggle, let other = widgetAt(p), other.id != id,
                other.kind == .button, other.slide, !other.toggle {
@@ -377,6 +388,10 @@ import UIKit
         }
         for touch in touches {
             guard let id = touchOwners.removeValue(forKey: ObjectIdentifier(touch)), let w = widget(id) else { continue }
+            if w.kind == .mousePad {
+                live[id]?.touchpad?.touchesEnded([touch])
+                continue
+            }
             touchEnded(w, at: touch.location(in: self))
         }
     }
@@ -390,6 +405,15 @@ import UIKit
         let l = Live()
         live[id] = l
         return l
+    }
+
+    /// The mouse pad's trackpad (the deck's, so it moves, clicks, drags and scrolls the same way)
+    private func touchpad(_ w: MNWidget) -> MNTouchpad {
+        let l = state(w.id)
+        if let pad = l.touchpad { return pad }
+        let pad = MNTouchpad(view: views[w.id] ?? self, fullScreen: false)
+        l.touchpad = pad
+        return pad
     }
 
     private func touchBegan(_ w: MNWidget, at p: CGPoint) {
@@ -432,7 +456,10 @@ import UIKit
             startDisplayLink()
         case .triggerPad:
             view?.showLevel(0)
-        case .overlay:
+        case .scrollPad:
+            l.scrollRemainder = 0
+            view?.showTouch(origin: nil, at: p.relative(to: view))
+        case .overlay, .mousePad, .blocker:
             break
         }
     }
@@ -467,6 +494,15 @@ import UIKit
         case .directionPad:
             updateDirections(w, at: p)
             view?.showTouch(origin: l.origin.relative(to: view), at: p.relative(to: view))
+        case .scrollPad:
+            // Same direction and speed setting as the trackpad's two-finger scroll: 4 wheel
+            // units (1/30 notch) per point at sensitivity 1
+            let k = 4 * w.sensitivity * MNTouchPrefs.scrollSpeed * (MNTouchPrefs.reverseScroll ? -1 : 1)
+            let units = (p.y - l.last.y) * k + l.scrollRemainder
+            let whole = units.rounded(.towardZero)
+            l.scrollRemainder = units - whole
+            MNInput.scroll(Int16(clamping: Int(whole)))
+            view?.showTouch(origin: nil, at: p.relative(to: view))
         default:
             break
         }
@@ -508,6 +544,8 @@ import UIKit
                 l.velocity = .zero
                 inputs.releaseAll(by: w.id)
             }
+        case .scrollPad:
+            view?.showTouch(origin: nil, at: nil)
         case .stickPad, .triggerPad, .directionPad:
             inputs.releaseAll(by: w.id)
             l.mask = 0
@@ -515,7 +553,7 @@ import UIKit
             l.sprinting = false
             view?.showTouch(origin: nil, at: nil)
             view?.showLevel(0)
-        case .overlay:
+        case .overlay, .mousePad, .blocker:
             break
         }
     }
@@ -642,6 +680,8 @@ import UIKit
         l.mask = 0
         l.walking = false
         l.sprinting = false
+        // A dropped trackpad lets go of a drag it was holding
+        l.touchpad = nil
         if l.gyroHeld, let w = widget(id) {
             deactivate(w)
         }

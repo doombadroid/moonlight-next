@@ -173,6 +173,13 @@ struct WidgetPickerView: View {
                     return w
                 }())
             }
+            Section {
+                item("Mouse touchpad", "rectangle.and.hand.point.up.left", MNWidget(kind: .mousePad),
+                     note: "Move, tap to click, tap then hold to drag, two fingers scroll")
+                item("Scroll strip", "arrow.up.and.down", MNWidget(kind: .scrollPad), note: "One finger turns the mouse wheel")
+                item("Touch blocker", "hand.raised.slash", MNWidget(kind: .blocker),
+                     note: "Covers a spot so a resting palm doesn't touch the stream")
+            }
         }
         .navigationTitle("Touchpads")
     }
@@ -276,6 +283,12 @@ struct WidgetPropertiesView: View {
                 buttonSections(w)
             case .stickPad, .cameraPad, .triggerPad:
                 padSection(w)
+            case .scrollPad:
+                Section {
+                    slider("Speed", bind(\.sensitivity, 1), 0.2...4, format: "%.1f×")
+                } footer: {
+                    Text("Also follows Settings › Touch scroll speed and direction.")
+                }
             case .directionPad:
                 directionSection(w)
             case .gyroAim:
@@ -296,7 +309,7 @@ struct WidgetPropertiesView: View {
                 } footer: {
                     Text("Tap the folder to show or hide what's in it. Put widgets in it from their settings. Moving the folder moves them too. A collapsed folder can slide to the nearest edge after a while; tap the tab to bring it back.")
                 }
-            case .gyroPause, .overlay:
+            case .gyroPause, .overlay, .mousePad, .blocker:
                 EmptyView()
             }
             if w.kind != .folder, !layer.folders.isEmpty {

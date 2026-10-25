@@ -187,6 +187,9 @@ struct MNWidget: Codable, Equatable, Identifiable {
         case function     // a stream action
         case folder       // shows or hides the widgets in it
         case overlay      // live diagram of a connected controller
+        case mousePad     // a small trackpad: move, tap to click, two fingers scroll
+        case scrollPad    // one finger scrolls the mouse wheel
+        case blocker      // takes touches so nothing under it reacts (a resting palm)
 
         var isButtonLike: Bool { self == .button || self == .gyroAim || self == .gyroPause || self == .function || self == .folder }
     }
@@ -255,6 +258,12 @@ struct MNWidget: Codable, Equatable, Identifiable {
             w = 64; h = 170; shape = .rounded; haptic = .off
         case .overlay:
             w = 200; h = 130; shape = .rounded; border = false; haptic = .off
+        case .mousePad:
+            w = 220; h = 150; shape = .rounded; haptic = .off
+        case .scrollPad:
+            w = 56; h = 170; shape = .rounded; haptic = .off
+        case .blocker:
+            w = 160; h = 110; shape = .rounded; haptic = .off; opacity = 0.3
         case .function, .folder:
             w = 44; h = 44
         default:
@@ -345,6 +354,8 @@ struct MNWidget: Codable, Equatable, Identifiable {
                 try c.encode(turboMs, forKey: .turboMs)
                 try c.encode(turboCount, forKey: .turboCount)
             }
+        case .scrollPad:
+            try c.encode(sensitivity, forKey: .sensitivity)
         case .stickPad, .cameraPad, .triggerPad:
             try c.encode(right, forKey: .right)
             try c.encode(sensitivity, forKey: .sensitivity)
@@ -363,7 +374,7 @@ struct MNWidget: Codable, Equatable, Identifiable {
         case .folder:
             try c.encode(collapsed, forKey: .collapsed)
             try c.encode(autoDock, forKey: .autoDock)
-        case .gyroPause, .overlay:
+        case .gyroPause, .overlay, .mousePad, .blocker:
             break
         }
     }
@@ -384,6 +395,9 @@ struct MNWidget: Codable, Equatable, Identifiable {
         case .function: return function.name
         case .folder: return "Folder"
         case .overlay: return "Controller"
+        case .mousePad: return "Touchpad"
+        case .scrollPad: return "Scroll"
+        case .blocker: return "Blocker"
         }
     }
 
