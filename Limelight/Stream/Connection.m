@@ -39,6 +39,10 @@ static int lastFrameNumber;
 static int activeVideoFormat;
 static video_stats_t currentVideoStats;
 static video_stats_t lastVideoStats;
+static uint64_t lastReceiveTimeUs, lastPresentationTimeUs;
+static uint32_t frameIntervalUs;
+static uint64_t stutterTimesUs[MN_STUTTER_HISTORY];
+static int stutterCount;
 static NSLock* videoStatsLock;
 
 static SDL_AudioDeviceID audioDevice;
@@ -55,6 +59,9 @@ int DrDecoderSetup(int videoFormat, int width, int height, int redrawRate, void*
     activeVideoFormat = videoFormat;
     memset(&currentVideoStats, 0, sizeof(currentVideoStats));
     memset(&lastVideoStats, 0, sizeof(lastVideoStats));
+    frameIntervalUs = redrawRate > 0 ? 1000000 / redrawRate : 16667;
+    lastReceiveTimeUs = lastPresentationTimeUs = 0;
+    stutterCount = 0;
     return 0;
 }
 
@@ -81,6 +88,17 @@ void DrStop(void)
     // No stats yet
     [videoStatsLock unlock];
     return NO;
+}
+
+-(int) getRecentStutterTimes:(uint64_t*)times
+{
+    [videoStatsLock lock];
+    int n = MIN(stutterCount, MN_STUTTER_HISTORY);
+    for (int i = 0; i < n; i++) {
+        times[i] = stutterTimesUs[(stutterCount - n + i) % MN_STUTTER_HISTORY];
+    }
+    [videoStatsLock unlock];
+    return n;
 }
 
 -(NSString*) getActiveCodecName
@@ -179,6 +197,28 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
         currentVideoStats.totalHostProcessingLatency += decodeUnit->frameHostProcessingLatency;
     }
     
+    // A hitch is a gap of 2.5 frame intervals, and never under 25 ms
+    uint64_t hitchUs = MAX(frameIntervalUs * 5 / 2, 25000);
+    if (lastReceiveTimeUs != 0 && decodeUnit->receiveTimeUs > lastReceiveTimeUs) {
+        int64_t arrivalGap = (int64_t)(decodeUnit->receiveTimeUs - lastReceiveTimeUs);
+        int64_t captureGap = (int64_t)(decodeUnit->presentationTimeUs - lastPresentationTimeUs);
+        if (captureGap > (int64_t)hitchUs) {
+            currentVideoStats.hostGaps++;
+        }
+        int64_t late = arrivalGap - MAX(captureGap, 0);
+        if (late > 0 && late > (int64_t)currentVideoStats.maxLateUs) {
+            currentVideoStats.maxLateUs = (uint32_t)MIN(late, (int64_t)UINT32_MAX);
+        }
+        if (late > (int64_t)hitchUs) {
+            currentVideoStats.networkStutters++;
+            [videoStatsLock lock];
+            stutterTimesUs[stutterCount++ % MN_STUTTER_HISTORY] = decodeUnit->receiveTimeUs;
+            [videoStatsLock unlock];
+        }
+    }
+    lastReceiveTimeUs = decodeUnit->receiveTimeUs;
+    lastPresentationTimeUs = decodeUnit->presentationTimeUs;
+
     currentVideoStats.receivedFrames++;
     currentVideoStats.totalFrames++;
 
