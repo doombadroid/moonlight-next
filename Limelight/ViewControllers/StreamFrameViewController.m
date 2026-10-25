@@ -64,6 +64,8 @@
     UIButton *_menuButton;
     UIViewController *_layoutEditorBar;
     __weak OnScreenControls *_layoutEditorControls;
+    NSLayoutConstraint *_layoutEditorBarTop;
+    NSLayoutConstraint *_layoutEditorBarBottom;
 
     // Tabletop input deck (keyboard, trackpad, gamepad) under the fold of an iPhone Duo
     UIViewController *_deckController;
@@ -492,7 +494,7 @@ static os_log_t DuoLog(void) {
     return deck;
 }
 
-// Rearranging the on-screen controls: touches drag controls until Save or Cancel
+// Rearranging the on-screen controls: touches select and drag controls until Save or Cancel
 - (void)startLayoutEditor {
     OnScreenControls* osc = [_streamView visibleOnScreenControls];
     if (osc == nil || _layoutEditorBar != nil) {
@@ -502,20 +504,30 @@ static os_log_t DuoLog(void) {
     _layoutEditorControls = osc;
     __weak StreamFrameViewController* weakSelf = self;
     __weak OnScreenControls* weakOsc = osc;
-    _layoutEditorBar = [MNLayoutEditorBar makeViewControllerWithHasGameLayout:[osc hasLayoutForThisGame]
-                                                                      onReset:^{ [weakOsc resetLayout]; }
-                                                                       onSave:^(BOOL thisGame) {
+    _layoutEditorBar = [MNLayoutEditorBar makeViewControllerWithControls:osc
+                                                           hasGameLayout:[osc hasLayoutForThisGame]
+                                                                  onSave:^(BOOL thisGame) {
         [weakOsc saveLayoutForThisGame:thisGame];
         [weakSelf endLayoutEditor];
     }
-                                                                     onCancel:^{ [weakSelf endLayoutEditor]; }];
+                                                                onCancel:^{ [weakSelf endLayoutEditor]; }
+                                                               onMoveBar:^(BOOL toBottom) {
+        // The bar can sit at the bottom when the controls under it at the top need moving
+        StreamFrameViewController* strongSelf = weakSelf;
+        if (strongSelf != nil) {
+            strongSelf->_layoutEditorBarTop.active = !toBottom;
+            strongSelf->_layoutEditorBarBottom.active = toBottom;
+        }
+    }];
     [self addChildViewController:_layoutEditorBar];
     UIView* bar = _layoutEditorBar.view;
     bar.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:bar];
+    _layoutEditorBarTop = [bar.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8];
+    _layoutEditorBarBottom = [bar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-8];
     [NSLayoutConstraint activateConstraints:@[
         [bar.centerXAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerXAnchor],
-        [bar.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
+        _layoutEditorBarTop,
         [bar.widthAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.widthAnchor constant:-16],
     ]];
     [_layoutEditorBar didMoveToParentViewController:self];

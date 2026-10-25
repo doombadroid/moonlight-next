@@ -26,3 +26,4 @@
 #import "Utils.h"
 #import "MNBridge.h"
 #import "MNInput.h"
+#import "OnScreenControls.h"

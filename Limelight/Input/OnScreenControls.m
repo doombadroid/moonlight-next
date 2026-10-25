@@ -12,6 +12,9 @@
 #import "Controller.h"
 #include "Limelight.h"
 
+// Buttons a finger can slide between: A, B, X, Y, Start, Select, L1, R1, L2, R2
+#define MN_SLIDE_COUNT 10
+
 #define UPDATE_BUTTON(x, y) (buttonFlags = \
 (y) ? (buttonFlags | (x)) : (buttonFlags & ~(x)))
 
@@ -40,21 +43,19 @@
     CALayer* _l2Button;
     CALayer* _l3Button;
     
-    UITouch* _aTouch;
-    UITouch* _bTouch;
-    UITouch* _xTouch;
-    UITouch* _yTouch;
     UITouch* _dpadTouch;
     UITouch* _lsTouch;
     UITouch* _rsTouch;
-    UITouch* _startTouch;
-    UITouch* _selectTouch;
-    UITouch* _r1Touch;
-    UITouch* _r2Touch;
     UITouch* _r3Touch;
-    UITouch* _l1Touch;
-    UITouch* _l2Touch;
     UITouch* _l3Touch;
+    // Touches holding a face, shoulder, Start or Select button -> index into the slide table.
+    // A finger can roll from one of these onto another.
+    NSMapTable<UITouch*, NSNumber*>* _buttonTouches;
+    BOOL _slideHeld[MN_SLIDE_COUNT];
+    // Buttons set to tap-to-toggle that are latched down, and the touches that tapped them
+    BOOL _latched[MN_SLIDE_COUNT];
+    NSMutableSet<UITouch*>* _latchTouches;
+    BOOL _pressHighlight;
     
     NSDate* l3TouchStart;
     NSDate* r3TouchStart;
@@ -64,14 +65,22 @@
     
     BOOL _iPad;
     CGRect _controlArea;
-    // Layout editor: per-control offsets in points for the current posture
+    // Layout editor: the layout for the current posture (see OnScreenControls.h for its format)
     NSString* _appID;
     NSString* _layoutPosture;
-    NSMutableDictionary<NSString*, NSValue*>* _layoutOffsets;
+    NSMutableDictionary<NSString*, id>* _layout;
+    NSMutableArray<NSDictionary*>* _undoStack;
     BOOL _editing;
+    NSString* _selected;
     NSString* _dragGroup;
     UITouch* _dragTouch;
     CGPoint _dragLast;
+    CGPoint _dragRaw;          // where the finger has taken the control, before snapping
+    CGPoint _dragStartCenter;
+    CGPoint _dragStartOffset;
+    BOOL _dragMoved;
+    CAShapeLayer* _selectionLayer;
+    CAShapeLayer* _guideLayer;
     CGRect _usableArea;
     UIView* _view;
     OnScreenControlsLevel _level;
@@ -98,8 +107,6 @@ static const float DEAD_ZONE_PADDING = 15;
 
 static const double STICK_CLICK_RATE = 100;
 static const float STICK_DEAD_ZONE = .1;
-static float STICK_INNER_SIZE;
-static float STICK_OUTER_SIZE;
 static float LS_CENTER_X;
 static float LS_CENTER_Y;
 static float RS_CENTER_X;
@@ -130,6 +137,10 @@ static float L3_Y;
     _controllerSupport = controllerSupport;
     _controller = [controllerSupport getOscController];
     _deadTouches = [[NSMutableArray alloc] init];
+    _buttonTouches = [NSMapTable strongToStrongObjectsMapTable];
+    _latchTouches = [NSMutableSet set];
+    id snap = [NSUserDefaults.standardUserDefaults objectForKey:@"mnOSCSnap"];
+    _snapToGuides = snap == nil || [snap boolValue];
     _swapABXY = streamConfig.swapABXYButtons;
     _appID = streamConfig.appID;
     
@@ -248,6 +259,9 @@ static float L3_Y;
     // Controls jump to their new place while dragging, without implicit animations
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
+    // Settings › Input › Highlight pressed buttons (on unless turned off)
+    id highlight = [NSUserDefaults.standardUserDefaults objectForKey:@"mnOSCPressHighlight"];
+    _pressHighlight = highlight == nil || [highlight boolValue];
     switch (_level) {
         case OnScreenControlsLevelOff:
             [self hideButtons];
@@ -321,6 +335,8 @@ static float L3_Y;
             Log(LOG_W, @"Unknown on-screen controls level: %d", (int)_level);
             break;
     }
+    [self applyControlStyles];
+    [self updateEditorOverlays];
     [CATransaction commit];
 }
 
@@ -646,9 +662,7 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
     _rightStick.frame = CGRectMake(RS_CENTER_X - rightStickImage.size.width / 2, RS_CENTER_Y - rightStickImage.size.height / 2, rightStickImage.size.width, rightStickImage.size.height);
     _rightStick.contents = (id) rightStickImage.CGImage;
     [_view.layer addSublayer:_rightStick];
-    
-    STICK_INNER_SIZE = rightStickImage.size.width;
-    STICK_OUTER_SIZE = rightStickBgImage.size.width;
+
 }
 
 - (void) drawL3R3 {
@@ -705,21 +719,250 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
     [_r3Button removeFromSuperlayer];
 }
 
+#pragma mark - Button presses
+
+static const int MN_SLIDE_FLAGS[MN_SLIDE_COUNT] = { A_FLAG, B_FLAG, X_FLAG, Y_FLAG, PLAY_FLAG, BACK_FLAG, LB_FLAG, RB_FLAG,
+                                                    0 /* L2 */, 0 /* R2 */ };
+
+- (CALayer*) slideLayer:(int)i {
+    switch (i) {
+        case 0: return _aButton;
+        case 1: return _bButton;
+        case 2: return _xButton;
+        case 3: return _yButton;
+        case 4: return _startButton;
+        case 5: return _selectButton;
+        case 6: return _l1Button;
+        case 7: return _r1Button;
+        case 8: return _l2Button;
+        default: return _r2Button;
+    }
+}
+
+// The layout group each slide-table button belongs to
+static NSString* const MN_SLIDE_GROUPS[MN_SLIDE_COUNT] = { @"abxy", @"abxy", @"abxy", @"abxy", @"start", @"select",
+                                                          @"l1", @"r1", @"l2", @"r2" };
+
+// The slide-table button under a point, or -1
+- (int) slideButtonAt:(CGPoint)p {
+    for (int i = 0; i < MN_SLIDE_COUNT; i++) {
+        CALayer* layer = [self slideLayer:i];
+        if (layer.superlayer != nil && CGRectContainsPoint(layer.frame, p)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Presses and releases slide-table buttons to match the touches holding them: a button is down
+// while any finger is on it. Returns whether anything changed; counts the new presses.
+- (BOOL) syncSlideButtons:(NSInteger*)newlyPressed {
+    BOOL want[MN_SLIDE_COUNT];
+    memcpy(want, _latched, sizeof(want));
+    for (UITouch* touch in _buttonTouches) {
+        want[[_buttonTouches objectForKey:touch].intValue] = YES;
+    }
+    BOOL changed = NO;
+    for (int i = 0; i < MN_SLIDE_COUNT; i++) {
+        if (want[i] == _slideHeld[i]) {
+            continue;
+        }
+        _slideHeld[i] = want[i];
+        changed = YES;
+        if (i == 8) {
+            [_controllerSupport updateLeftTrigger:_controller left:want[i] ? 0xFF : 0];
+        }
+        else if (i == 9) {
+            [_controllerSupport updateRightTrigger:_controller right:want[i] ? 0xFF : 0];
+        }
+        else if (want[i]) {
+            [_controllerSupport setButtonFlag:_controller flags:MN_SLIDE_FLAGS[i]];
+        }
+        else {
+            [_controllerSupport clearButtonFlag:_controller flags:MN_SLIDE_FLAGS[i]];
+        }
+        [self setLayer:[self slideLayer:i] highlighted:want[i]];
+        if (want[i] && newlyPressed != NULL) {
+            (*newlyPressed)++;
+        }
+    }
+    return changed;
+}
+
+- (CALayer*) dpadLayerAt:(CGPoint)p {
+    for (CALayer* layer in @[_upButton, _downButton, _leftButton, _rightButton]) {
+        if (layer.superlayer != nil && CGRectContainsPoint(layer.frame, p)) {
+            return layer;
+        }
+    }
+    return nil;
+}
+
+- (int) flagForDpadLayer:(CALayer*)layer {
+    return layer == _upButton ? UP_FLAG : layer == _downButton ? DOWN_FLAG : layer == _leftButton ? LEFT_FLAG : RIGHT_FLAG;
+}
+
+- (void) highlightDpad:(CALayer*)pressed {
+    for (CALayer* layer in @[_upButton, _downButton, _leftButton, _rightButton]) {
+        [self setLayer:layer highlighted:layer == pressed];
+    }
+}
+
+// A glow in the accent colour around a held control, at full opacity even in a faded layout
+- (void) setLayer:(CALayer*)layer highlighted:(BOOL)on {
+    on = on && _pressHighlight;
+    if (!on && layer.shadowOpacity == 0) {
+        return;
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    if (on) {
+        CGRect glow = CGRectInset(layer.bounds, -5, -5);
+        layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:glow
+                                                      cornerRadius:MIN(glow.size.width, glow.size.height) / 2].CGPath;
+        layer.shadowColor = [UIColor colorWithRed:0x8A / 255.0 green:0xB4 / 255.0 blue:1 alpha:1].CGColor; // Theme.accent
+        layer.shadowOffset = CGSizeZero;
+        layer.shadowRadius = 6;
+        layer.shadowOpacity = 0.9;
+        layer.opacity = 1;
+    }
+    else {
+        layer.shadowOpacity = 0;
+        NSNumber* base = [layer valueForKey:@"mnBaseOpacity"];
+        layer.opacity = base != nil ? base.floatValue : 1;
+    }
+    [CATransaction commit];
+}
+
+- (void) pressHaptic {
+#if !TARGET_OS_TV
+    // A tap you can feel for every button press
+    // Settings › Input › Haptics on button presses (on unless turned off)
+    id hapticsSetting = [[NSUserDefaults standardUserDefaults] objectForKey:@"mnHapticsEnabled"];
+    if (hapticsSetting != nil && ![hapticsSetting boolValue]) {
+        return;
+    }
+    if (_pressHaptic == nil) {
+        _pressHaptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    }
+    [_pressHaptic impactOccurredWithIntensity:0.8];
+    [_pressHaptic prepare];
+#endif
+}
+
 #pragma mark - Layout editor
 
-// Movable groups and the statics that position them; the layer says whether it's on screen
+// Movable groups and the statics that position them; the layers say whether it's on screen
 static NSString* const MN_GROUPS[] = { @"dpad", @"abxy", @"ls", @"rs", @"start", @"select",
                                        @"l1", @"l2", @"r1", @"r2", @"l3", @"r3" };
+static NSString* const MN_GROUP_NAMES[] = { @"D-pad", @"A B X Y", @"Left stick", @"Right stick", @"Start", @"Select",
+                                            @"L1", @"L2", @"R1", @"R2", @"L3", @"R3" };
 static float* const MN_GROUP_X[] = { &D_PAD_CENTER_X, &BUTTON_CENTER_X, &LS_CENTER_X, &RS_CENTER_X, &START_X, &SELECT_X,
                                      &L1_X, &L2_X, &R1_X, &R2_X, &L3_X, &R3_X };
 static float* const MN_GROUP_Y[] = { &D_PAD_CENTER_Y, &BUTTON_CENTER_Y, &LS_CENTER_Y, &RS_CENTER_Y, &START_Y, &SELECT_Y,
                                      &L1_Y, &L2_Y, &R1_Y, &R2_Y, &L3_Y, &R3_Y };
 static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
 
-- (CALayer*) layerForGroup:(int)i {
-    CALayer* layers[] = { _upButton, _aButton, _leftStickBackground, _rightStickBackground, _startButton, _selectButton,
-                          _l1Button, _l2Button, _r1Button, _r2Button, _l3Button, _r3Button };
-    return layers[i];
+static int MNGroupIndex(NSString* name) {
+    for (int i = 0; i < MN_GROUP_COUNT; i++) {
+        if ([MN_GROUPS[i] isEqualToString:name]) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// One control's entry in a layout: @[dx, dy] (the original format), @[dx, dy, scale, opacity,
+// hidden] or @[dx, dy, scale, opacity, hidden, toggle]. Entries come from saved layouts and
+// imported files, so anything odd reads as the default.
+typedef struct {
+    CGPoint offset;
+    CGFloat scale;
+    CGFloat opacity;
+    BOOL hidden;
+    BOOL toggle; // tap to latch, tap again to release
+} MNControlStyle;
+
+static const CGFloat MN_MIN_SCALE = 0.5;
+static const CGFloat MN_MAX_SCALE = 2;
+static const CGFloat MN_MIN_OPACITY = 0.15;
+static const CGFloat MN_SNAP_DISTANCE = 8;
+static const NSUInteger MN_UNDO_LIMIT = 50;
+
+static void MNSnapAxis(CGFloat value, CGFloat candidate, CGFloat* best, CGFloat* snapped) {
+    if (fabs(candidate - value) < *best) {
+        *best = fabs(candidate - value);
+        *snapped = candidate;
+    }
+}
+
+static CGFloat MNClamp(double v, CGFloat lo, CGFloat hi, CGFloat fallback) {
+    return isfinite(v) ? MIN(MAX(v, lo), hi) : fallback;
+}
+
+static MNControlStyle MNStyleFromEntry(id entry) {
+    MNControlStyle style = { CGPointZero, 1, 1, NO, NO };
+    if (![entry isKindOfClass:NSArray.class] || [entry count] < 2) {
+        return style;
+    }
+    for (id value in entry) {
+        if (![value isKindOfClass:NSNumber.class]) {
+            return style;
+        }
+    }
+    NSArray<NSNumber*>* a = entry;
+    style.offset = CGPointMake(MNClamp(a[0].doubleValue, -4000, 4000, 0), MNClamp(a[1].doubleValue, -4000, 4000, 0));
+    if (a.count >= 5) {
+        style.scale = MNClamp(a[2].doubleValue, MN_MIN_SCALE, MN_MAX_SCALE, 1);
+        style.opacity = MNClamp(a[3].doubleValue, MN_MIN_OPACITY, 1, 1);
+        style.hidden = a[4].boolValue;
+    }
+    if (a.count >= 6) {
+        style.toggle = a[5].boolValue;
+    }
+    return style;
+}
+
+static id MNEntryFromStyle(MNControlStyle s) {
+    if (s.toggle) {
+        return @[ @(s.offset.x), @(s.offset.y), @(s.scale), @(s.opacity), @(s.hidden), @YES ];
+    }
+    if (s.scale == 1 && s.opacity == 1 && !s.hidden) {
+        return CGPointEqualToPoint(s.offset, CGPointZero) ? nil : @[ @(s.offset.x), @(s.offset.y) ];
+    }
+    return @[ @(s.offset.x), @(s.offset.y), @(s.scale), @(s.opacity), @(s.hidden) ];
+}
+
++ (NSArray<NSString*>*) controlIds {
+    return [NSArray arrayWithObjects:MN_GROUPS count:MN_GROUP_COUNT];
+}
+
+- (NSArray<CALayer*>*) layersForGroup:(int)i {
+    switch (i) {
+        case 0: return @[_upButton, _downButton, _leftButton, _rightButton];
+        case 1: return @[_aButton, _bButton, _xButton, _yButton];
+        case 2: return @[_leftStickBackground, _leftStick];
+        case 3: return @[_rightStickBackground, _rightStick];
+        case 4: return @[_startButton];
+        case 5: return @[_selectButton];
+        case 6: return @[_l1Button];
+        case 7: return @[_l2Button];
+        case 8: return @[_r1Button];
+        case 9: return @[_r2Button];
+        case 10: return @[_l3Button];
+        default: return @[_r3Button];
+    }
+}
+
+// The on-screen extent of a group, or CGRectNull when it isn't shown
+- (CGRect) frameForGroup:(int)i {
+    CGRect frame = CGRectNull;
+    for (CALayer* layer in [self layersForGroup:i]) {
+        if (layer.superlayer != nil) {
+            frame = CGRectUnion(frame, layer.frame);
+        }
+    }
+    return frame;
 }
 
 // Layouts are saved per posture (the folded outer display, a phone in landscape, the roomy
@@ -737,47 +980,110 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
                         : [NSString stringWithFormat:@"mnOSCLayout.%@", [self currentPosture]];
 }
 
-- (void) loadLayoutOffsets {
+- (void) loadLayout {
     _layoutPosture = [self currentPosture];
     NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
     NSDictionary* saved = (_appID != nil ? [defaults dictionaryForKey:[self layoutKeyForApp:_appID]] : nil)
                           ?: [defaults dictionaryForKey:[self layoutKeyForApp:nil]];
-    _layoutOffsets = [NSMutableDictionary dictionary];
-    for (NSString* name in saved) {
-        NSArray* xy = saved[name];
-        if ([xy isKindOfClass:NSArray.class] && xy.count == 2) {
-            _layoutOffsets[name] = [NSValue valueWithCGPoint:CGPointMake([xy[0] doubleValue], [xy[1] doubleValue])];
+    _layout = saved != nil ? [saved mutableCopy] : [NSMutableDictionary dictionary];
+    [_undoStack removeAllObjects];
+    [self releaseLatches];
+}
+
+- (NSMutableDictionary<NSString*, id>*) layout {
+    if (_layout == nil || ![_layoutPosture isEqualToString:[self currentPosture]]) {
+        [self loadLayout];
+    }
+    return _layout;
+}
+
+- (MNControlStyle) styleForGroup:(NSString*)name {
+    return MNStyleFromEntry([self layout][name]);
+}
+
+- (BOOL) isToggleSlide:(int)i {
+    return [self styleForGroup:MN_SLIDE_GROUPS[i]].toggle;
+}
+
+- (void) setStyle:(MNControlStyle)style forGroup:(NSString*)name {
+    [self layout][name] = MNEntryFromStyle(style);
+}
+
+- (void) applyLayoutOffsets {
+    CGRect b = _view.bounds;
+    for (int i = 0; i < MN_GROUP_COUNT; i++) {
+        CGPoint d = [self styleForGroup:MN_GROUPS[i]].offset;
+        if (CGPointEqualToPoint(d, CGPointZero)) {
+            continue;
+        }
+        *MN_GROUP_X[i] = MIN(MAX(*MN_GROUP_X[i] + d.x, CGRectGetMinX(b)), CGRectGetMaxX(b));
+        *MN_GROUP_Y[i] = MIN(MAX(*MN_GROUP_Y[i] + d.y, CGRectGetMinY(b)), CGRectGetMaxY(b));
+    }
+}
+
+// Size, opacity and hiding, after the draw methods have placed every layer at its natural size.
+// A group scales about its centre, so a cluster keeps its shape. While editing, hidden controls
+// stay on screen, faint, so they can be selected and shown again.
+- (void) applyControlStyles {
+    CGFloat global = self.globalOpacity;
+    for (int i = 0; i < MN_GROUP_COUNT; i++) {
+        MNControlStyle style = [self styleForGroup:MN_GROUPS[i]];
+        CGPoint c = CGPointMake(*MN_GROUP_X[i], *MN_GROUP_Y[i]);
+        for (CALayer* layer in [self layersForGroup:i]) {
+            if (layer.superlayer == nil) {
+                continue;
+            }
+            if (style.hidden && !_editing) {
+                [layer removeFromSuperlayer];
+                continue;
+            }
+            if (style.scale != 1) {
+                CGRect f = layer.frame;
+                layer.frame = CGRectMake(c.x + (f.origin.x - c.x) * style.scale, c.y + (f.origin.y - c.y) * style.scale,
+                                         f.size.width * style.scale, f.size.height * style.scale);
+                layer.cornerRadius *= style.scale;
+            }
+            CGFloat base = style.opacity * global * (style.hidden ? 0.3 : 1);
+            [layer setValue:@(base) forKey:@"mnBaseOpacity"];
+            if (layer.shadowOpacity > 0) {
+                [self setLayer:layer highlighted:YES]; // still held: refit the glow
+            }
+            else {
+                layer.opacity = base;
+            }
         }
     }
 }
 
-- (void) applyLayoutOffsets {
-    if (_layoutOffsets == nil || ![_layoutPosture isEqualToString:[self currentPosture]]) {
-        [self loadLayoutOffsets];
+- (void) notifyEditor {
+    if (self.editorChanged != nil) {
+        self.editorChanged();
     }
-    CGRect b = _view.bounds;
-    for (int i = 0; i < MN_GROUP_COUNT; i++) {
-        NSValue* offset = _layoutOffsets[MN_GROUPS[i]];
-        if (offset == nil) {
-            continue;
-        }
-        CGPoint d = offset.CGPointValue;
-        *MN_GROUP_X[i] = MIN(MAX(*MN_GROUP_X[i] + d.x, CGRectGetMinX(b)), CGRectGetMaxX(b));
-        *MN_GROUP_Y[i] = MIN(MAX(*MN_GROUP_Y[i] + d.y, CGRectGetMinY(b)), CGRectGetMaxY(b));
+}
+
+- (void) refreshLayout {
+    if (_visible) {
+        [self updateControls];
     }
+    [self notifyEditor];
 }
 
 - (void) setEditing:(BOOL)editing {
     _editing = editing;
     _dragGroup = nil;
     _dragTouch = nil;
+    _selected = nil;
+    if (_undoStack == nil) {
+        _undoStack = [NSMutableArray array];
+    }
+    [_undoStack removeAllObjects];
     if (!editing) {
         // Leaving without saving puts the saved layout back
-        [self loadLayoutOffsets];
+        [self loadLayout];
+        self.editorChanged = nil;
+        [_guideLayer removeFromSuperlayer];
     }
-    if (_visible) {
-        [self updateControls];
-    }
+    [self refreshLayout];
 }
 
 - (BOOL) isEditing {
@@ -785,18 +1091,14 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
 }
 
 - (void) resetLayout {
-    [_layoutOffsets removeAllObjects];
-    if (_visible) {
-        [self updateControls];
-    }
+    [self pushUndo];
+    [[self layout] removeAllObjects];
+    [self releaseLatches];
+    [self refreshLayout];
 }
 
 - (void) saveLayoutForThisGame:(BOOL)thisGame {
-    NSMutableDictionary* plist = [NSMutableDictionary dictionary];
-    for (NSString* name in _layoutOffsets) {
-        CGPoint d = _layoutOffsets[name].CGPointValue;
-        plist[name] = @[ @(d.x), @(d.y) ];
-    }
+    NSDictionary* plist = [[self layout] copy];
     NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
     if (thisGame && _appID != nil) {
         [defaults setObject:plist forKey:[self layoutKeyForApp:_appID]];
@@ -814,38 +1116,281 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
     return _appID != nil && [NSUserDefaults.standardUserDefaults dictionaryForKey:[self layoutKeyForApp:_appID]] != nil;
 }
 
-// While editing, a touch grabs the nearest visible control and drags it; nothing reaches the PC.
+- (NSString*) selectedControl {
+    return _selected;
+}
+
+- (void) selectControl:(NSString*)control {
+    _selected = control != nil && MNGroupIndex(control) >= 0 ? control : nil;
+    [self refreshLayout];
+}
+
+- (NSString*) displayNameForControl:(NSString*)control {
+    int i = MNGroupIndex(control);
+    return i >= 0 ? MN_GROUP_NAMES[i] : control;
+}
+
+- (CGFloat) scaleForControl:(NSString*)control {
+    return [self styleForGroup:control].scale;
+}
+
+- (void) setScale:(CGFloat)scale forControl:(NSString*)control {
+    MNControlStyle style = [self styleForGroup:control];
+    style.scale = MNClamp(scale, MN_MIN_SCALE, MN_MAX_SCALE, 1);
+    [self setStyle:style forGroup:control];
+    [self refreshLayout];
+}
+
+- (CGFloat) opacityForControl:(NSString*)control {
+    return [self styleForGroup:control].opacity;
+}
+
+- (void) setOpacity:(CGFloat)opacity forControl:(NSString*)control {
+    MNControlStyle style = [self styleForGroup:control];
+    style.opacity = MNClamp(opacity, MN_MIN_OPACITY, 1, 1);
+    [self setStyle:style forGroup:control];
+    [self refreshLayout];
+}
+
+- (BOOL) isControlHidden:(NSString*)control {
+    return [self styleForGroup:control].hidden;
+}
+
+- (void) setHidden:(BOOL)hidden forControl:(NSString*)control {
+    [self pushUndo];
+    MNControlStyle style = [self styleForGroup:control];
+    style.hidden = hidden;
+    [self setStyle:style forGroup:control];
+    [self refreshLayout];
+}
+
+- (BOOL) controlSupportsToggle:(NSString*)control {
+    for (int i = 0; i < MN_SLIDE_COUNT; i++) {
+        if ([MN_SLIDE_GROUPS[i] isEqualToString:control]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (BOOL) isControlToggle:(NSString*)control {
+    return [self styleForGroup:control].toggle;
+}
+
+- (void) setToggle:(BOOL)toggle forControl:(NSString*)control {
+    [self pushUndo];
+    MNControlStyle style = [self styleForGroup:control];
+    style.toggle = toggle && [self controlSupportsToggle:control];
+    [self setStyle:style forGroup:control];
+    [self releaseLatches];
+    [self refreshLayout];
+}
+
+// Lets go of every latched button, e.g. when a button stops being tap-to-toggle
+- (void) releaseLatches {
+    memset(_latched, 0, sizeof(_latched));
+    if ([self syncSlideButtons:NULL]) {
+        [_controllerSupport updateFinished:_controller];
+    }
+}
+
+- (void) resetControl:(NSString*)control {
+    [self pushUndo];
+    [[self layout] removeObjectForKey:control];
+    [self releaseLatches];
+    [self refreshLayout];
+}
+
+- (CGFloat) globalOpacity {
+    id value = [self layout][@"opacity"];
+    return [value isKindOfClass:NSNumber.class] ? MNClamp([value doubleValue], MN_MIN_OPACITY, 1, 1) : 1;
+}
+
+- (void) setGlobalOpacity:(CGFloat)opacity {
+    opacity = MNClamp(opacity, MN_MIN_OPACITY, 1, 1);
+    [self layout][@"opacity"] = opacity < 1 ? @(opacity) : nil;
+    [self refreshLayout];
+}
+
+- (void) setSnapToGuides:(BOOL)snap {
+    _snapToGuides = snap;
+    [NSUserDefaults.standardUserDefaults setBool:snap forKey:@"mnOSCSnap"];
+    [self notifyEditor];
+}
+
+- (void) pushUndo {
+    if (_undoStack == nil) {
+        _undoStack = [NSMutableArray array];
+    }
+    [_undoStack addObject:[[self layout] copy]];
+    if (_undoStack.count > MN_UNDO_LIMIT) {
+        [_undoStack removeObjectAtIndex:0];
+    }
+    [self notifyEditor];
+}
+
+- (BOOL) canUndo {
+    return _undoStack.count > 0;
+}
+
+- (void) undo {
+    if (_undoStack.count == 0) {
+        return;
+    }
+    _layout = [_undoStack.lastObject mutableCopy];
+    [_undoStack removeLastObject];
+    [self releaseLatches];
+    [self refreshLayout];
+}
+
+- (NSDictionary<NSString*, id>*) layoutDictionary {
+    return [[self layout] copy];
+}
+
+- (void) applyLayoutDictionary:(NSDictionary<NSString*, id>*)layout {
+    [self pushUndo];
+    _layout = [layout mutableCopy];
+    [self releaseLatches];
+    [self refreshLayout];
+}
+
+// The dashed outline around the selected control while editing
+- (void) updateEditorOverlays {
+    int i = _editing && _selected != nil ? MNGroupIndex(_selected) : -1;
+    CGRect frame = i >= 0 ? [self frameForGroup:i] : CGRectNull;
+    if (CGRectIsNull(frame)) {
+        [_selectionLayer removeFromSuperlayer];
+        return;
+    }
+    if (_selectionLayer == nil) {
+        _selectionLayer = [CAShapeLayer layer];
+        _selectionLayer.fillColor = UIColor.clearColor.CGColor;
+        _selectionLayer.strokeColor = [UIColor colorWithRed:0x8A / 255.0 green:0xB4 / 255.0 blue:1 alpha:1].CGColor;
+        _selectionLayer.lineWidth = 1.5;
+        _selectionLayer.lineDashPattern = @[ @6, @4 ];
+    }
+    _selectionLayer.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(frame, -6, -6) cornerRadius:10].CGPath;
+    [_view.layer addSublayer:_selectionLayer];
+}
+
+// Alignment guides while dragging: a line across the view on each axis that snapped (NAN: none)
+- (void) drawGuidesX:(CGFloat)x y:(CGFloat)y {
+    if (isnan(x) && isnan(y)) {
+        [_guideLayer removeFromSuperlayer];
+        return;
+    }
+    if (_guideLayer == nil) {
+        _guideLayer = [CAShapeLayer layer];
+        _guideLayer.strokeColor = [UIColor colorWithRed:0x8A / 255.0 green:0xB4 / 255.0 blue:1 alpha:0.7].CGColor;
+        _guideLayer.lineWidth = 1;
+        _guideLayer.lineDashPattern = @[ @4, @4 ];
+    }
+    CGRect b = _view.bounds;
+    UIBezierPath* path = [UIBezierPath bezierPath];
+    if (!isnan(x)) {
+        [path moveToPoint:CGPointMake(x, CGRectGetMinY(b))];
+        [path addLineToPoint:CGPointMake(x, CGRectGetMaxY(b))];
+    }
+    if (!isnan(y)) {
+        [path moveToPoint:CGPointMake(CGRectGetMinX(b), y)];
+        [path addLineToPoint:CGPointMake(CGRectGetMaxX(b), y)];
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _guideLayer.path = path.CGPath;
+    [_view.layer addSublayer:_guideLayer];
+    [CATransaction commit];
+}
+
+// Snaps a dragged group's centre to the screen's centre lines, to another control's row or
+// column, or to the mirror of another control (so pairs like L1 and R1 sit symmetrically).
+- (CGPoint) snapPoint:(CGPoint)p forGroup:(int)g guideX:(CGFloat*)guideX guideY:(CGFloat*)guideY {
+    CGRect b = _view.bounds;
+    CGFloat bestX = MN_SNAP_DISTANCE, bestY = MN_SNAP_DISTANCE;
+    *guideX = NAN;
+    *guideY = NAN;
+    MNSnapAxis(p.x, CGRectGetMidX(b), &bestX, guideX);
+    MNSnapAxis(p.y, CGRectGetMidY(b), &bestY, guideY);
+    for (int i = 0; i < MN_GROUP_COUNT; i++) {
+        if (i == g || CGRectIsNull([self frameForGroup:i])) {
+            continue;
+        }
+        MNSnapAxis(p.x, *MN_GROUP_X[i], &bestX, guideX);
+        MNSnapAxis(p.x, CGRectGetMinX(b) + CGRectGetMaxX(b) - *MN_GROUP_X[i], &bestX, guideX);
+        MNSnapAxis(p.y, *MN_GROUP_Y[i], &bestY, guideY);
+    }
+    return CGPointMake(isnan(*guideX) ? p.x : *guideX, isnan(*guideY) ? p.y : *guideY);
+}
+
+// The group a touch at p means: the one it lands on, else the nearest within a thumb's reach
+- (int) groupNear:(CGPoint)p {
+    int best = -1;
+    CGFloat bestScore = CGFLOAT_MAX;
+    for (int i = 0; i < MN_GROUP_COUNT; i++) {
+        CGRect r = [self frameForGroup:i];
+        if (CGRectIsNull(r)) {
+            continue;
+        }
+        CGFloat dx = MAX(MAX(CGRectGetMinX(r) - p.x, 0), p.x - CGRectGetMaxX(r));
+        CGFloat dy = MAX(MAX(CGRectGetMinY(r) - p.y, 0), p.y - CGRectGetMaxY(r));
+        CGFloat edge = hypot(dx, dy);
+        if (edge > 24) {
+            continue;
+        }
+        CGFloat score = edge * 10 + hypot(p.x - CGRectGetMidX(r), p.y - CGRectGetMidY(r));
+        if (score < bestScore) {
+            bestScore = score;
+            best = i;
+        }
+    }
+    return best;
+}
+
+// While editing, a touch selects the control under it and drags it; nothing reaches the PC.
+// Touching empty space clears the selection.
 - (void) handleEditTouches:(NSSet*)touches phase:(UITouchPhase)phase {
     for (UITouch* touch in touches) {
         CGPoint p = [touch locationInView:_view];
         if (phase == UITouchPhaseBegan && _dragTouch == nil) {
-            CGFloat best = 80;
-            for (int i = 0; i < MN_GROUP_COUNT; i++) {
-                if ([self layerForGroup:i].superlayer == nil) {
-                    continue;
-                }
-                CGFloat dist = hypot(p.x - *MN_GROUP_X[i], p.y - *MN_GROUP_Y[i]);
-                if (dist < best) {
-                    best = dist;
-                    _dragGroup = MN_GROUPS[i];
-                }
-            }
-            if (_dragGroup != nil) {
+            int g = [self groupNear:p];
+            _selected = g >= 0 ? MN_GROUPS[g] : nil;
+            if (g >= 0) {
+                _dragGroup = MN_GROUPS[g];
                 _dragTouch = touch;
                 _dragLast = p;
+                _dragStartCenter = _dragRaw = CGPointMake(*MN_GROUP_X[g], *MN_GROUP_Y[g]);
+                _dragStartOffset = [self styleForGroup:_dragGroup].offset;
+                _dragMoved = NO;
             }
+            [self refreshLayout];
         }
         else if (touch == _dragTouch && phase == UITouchPhaseMoved) {
-            CGPoint d = _layoutOffsets[_dragGroup].CGPointValue;
-            d.x += p.x - _dragLast.x;
-            d.y += p.y - _dragLast.y;
-            _layoutOffsets[_dragGroup] = [NSValue valueWithCGPoint:d];
+            if (!_dragMoved) {
+                // A tap only selects: ignore the wobble of a finger landing
+                if (hypot(p.x - _dragLast.x, p.y - _dragLast.y) < 4) {
+                    continue;
+                }
+                [self pushUndo];
+                _dragMoved = YES;
+            }
+            _dragRaw.x += p.x - _dragLast.x;
+            _dragRaw.y += p.y - _dragLast.y;
             _dragLast = p;
+            CGFloat guideX = NAN, guideY = NAN;
+            CGPoint target = _snapToGuides ? [self snapPoint:_dragRaw forGroup:MNGroupIndex(_dragGroup) guideX:&guideX guideY:&guideY]
+                                           : _dragRaw;
+            MNControlStyle style = [self styleForGroup:_dragGroup];
+            style.offset = CGPointMake(_dragStartOffset.x + target.x - _dragStartCenter.x,
+                                       _dragStartOffset.y + target.y - _dragStartCenter.y);
+            [self setStyle:style forGroup:_dragGroup];
             [self updateControls];
+            [self drawGuidesX:guideX y:guideY];
         }
         else if (touch == _dragTouch) {
             _dragTouch = nil;
             _dragGroup = nil;
+            [self drawGuidesX:NAN y:NAN];
+            [self notifyEditor];
         }
     }
 }
@@ -857,14 +1402,17 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
     }
     BOOL updated = false;
     BOOL buttonTouch = false;
-    float rsMaxX = RS_CENTER_X + STICK_OUTER_SIZE / 2;
-    float rsMaxY = RS_CENTER_Y + STICK_OUTER_SIZE / 2;
-    float rsMinX = RS_CENTER_X - STICK_OUTER_SIZE / 2;
-    float rsMinY = RS_CENTER_Y - STICK_OUTER_SIZE / 2;
-    float lsMaxX = LS_CENTER_X + STICK_OUTER_SIZE / 2;
-    float lsMaxY = LS_CENTER_Y + STICK_OUTER_SIZE / 2;
-    float lsMinX = LS_CENTER_X - STICK_OUTER_SIZE / 2;
-    float lsMinY = LS_CENTER_Y - STICK_OUTER_SIZE / 2;
+    // Each stick's own size: the editor can scale them
+    float rsHalf = _rightStickBackground.bounds.size.width / 2;
+    float lsHalf = _leftStickBackground.bounds.size.width / 2;
+    float rsMaxX = RS_CENTER_X + rsHalf;
+    float rsMaxY = RS_CENTER_Y + rsHalf;
+    float rsMinX = RS_CENTER_X - rsHalf;
+    float rsMinY = RS_CENTER_Y - rsHalf;
+    float lsMaxX = LS_CENTER_X + lsHalf;
+    float lsMaxY = LS_CENTER_Y + lsHalf;
+    float lsMinX = LS_CENTER_X - lsHalf;
+    float lsMinY = LS_CENTER_Y - lsHalf;
     
     for (UITouch* touch in touches) {
         CGPoint touchLocation = [touch locationInView:_view];
@@ -876,7 +1424,10 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
             if (yLoc > lsMaxY) yLoc = lsMaxY;
             if (yLoc < lsMinY) yLoc = lsMinY;
             
-            _leftStick.frame = CGRectMake(xLoc - STICK_INNER_SIZE / 2, yLoc - STICK_INNER_SIZE / 2, STICK_INNER_SIZE, STICK_INNER_SIZE);
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            _leftStick.position = CGPointMake(xLoc, yLoc);
+            [CATransaction commit];
             
             float xStickVal = (xLoc - LS_CENTER_X) / (lsMaxX - LS_CENTER_X);
             float yStickVal = (yLoc - LS_CENTER_Y) / (lsMaxY - LS_CENTER_Y);
@@ -893,7 +1444,10 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
             if (yLoc > rsMaxY) yLoc = rsMaxY;
             if (yLoc < rsMinY) yLoc = rsMinY;
             
-            _rightStick.frame = CGRectMake(xLoc - STICK_INNER_SIZE / 2, yLoc - STICK_INNER_SIZE / 2, STICK_INNER_SIZE, STICK_INNER_SIZE);
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            _rightStick.position = CGPointMake(xLoc, yLoc);
+            [CATransaction commit];
             
             float xStickVal = (xLoc - RS_CENTER_X) / (rsMaxX - RS_CENTER_X);
             float yStickVal = (yLoc - RS_CENTER_Y) / (rsMaxY - RS_CENTER_Y);
@@ -909,49 +1463,36 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
                                           flags:UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG];
             
             // Allow the user to slide their finger to another d-pad button
-            if ([_upButton.presentationLayer hitTest:touchLocation]) {
-                [_controllerSupport setButtonFlag:_controller flags:UP_FLAG];
-                updated = true;
-            } else if ([_downButton.presentationLayer hitTest:touchLocation]) {
-                [_controllerSupport setButtonFlag:_controller flags:DOWN_FLAG];
-                updated = true;
-            } else if ([_leftButton.presentationLayer hitTest:touchLocation]) {
-                [_controllerSupport setButtonFlag:_controller flags:LEFT_FLAG];
-                updated = true;
-            } else if ([_rightButton.presentationLayer hitTest:touchLocation]) {
-                [_controllerSupport setButtonFlag:_controller flags:RIGHT_FLAG];
-                updated = true;
+            CALayer* pressed = [self dpadLayerAt:touchLocation];
+            if (pressed != nil) {
+                [_controllerSupport setButtonFlag:_controller flags:[self flagForDpadLayer:pressed]];
             }
-            
+            [self highlightDpad:pressed];
+            updated = true;
             buttonTouch = true;
-        } else if (touch == _aTouch) {
+        } else if ([_buttonTouches objectForKey:touch] != nil || [_deadTouches containsObject:touch]) {
+            // Rolling a thumb from one button onto another: the new one takes over. Off every
+            // button, the last one stays held, so a thumb drifting into a gap doesn't drop it.
+            // A touch that landed in the dead space around the buttons picks one up the same way.
+            int i = [self slideButtonAt:touchLocation];
+            if (i >= 0 && ![self isToggleSlide:i]) {
+                [_buttonTouches setObject:@(i) forKey:touch];
+                [_deadTouches removeObject:touch];
+            }
             buttonTouch = true;
-        } else if (touch == _bTouch) {
-            buttonTouch = true;
-        } else if (touch == _xTouch) {
-            buttonTouch = true;
-        } else if (touch == _yTouch) {
-            buttonTouch = true;
-        } else if (touch == _startTouch) {
-            buttonTouch = true;
-        } else if (touch == _selectTouch) {
-            buttonTouch = true;
-        } else if (touch == _l1Touch) {
-            buttonTouch = true;
-        } else if (touch == _r1Touch) {
-            buttonTouch = true;
-        } else if (touch == _l2Touch) {
-            buttonTouch = true;
-        } else if (touch == _r2Touch) {
-            buttonTouch = true;
-        } else if (touch == _l3Touch) {
-            buttonTouch = true;
-        } else if (touch == _r3Touch) {
+        } else if (touch == _l3Touch || touch == _r3Touch || [_latchTouches containsObject:touch]) {
             buttonTouch = true;
         }
         if ([_deadTouches containsObject:touch]) {
             updated = true;
         }
+    }
+    NSInteger newlyPressed = 0;
+    if ([self syncSlideButtons:&newlyPressed]) {
+        updated = true;
+    }
+    if (newlyPressed > 0) {
+        [self pressHaptic];
     }
     if (updated) {
         [_controllerSupport updateFinished:_controller];
@@ -966,68 +1507,27 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
     }
     BOOL updated = false;
     BOOL stickTouch = false;
-    BOOL buttonPressed = false;
     for (UITouch* touch in touches) {
         CGPoint touchLocation = [touch locationInView:_view];
-        BOOL updatedBefore = updated;
+        CALayer* dpad = nil;
+        int slide = [self slideButtonAt:touchLocation];
         
-        if (_aButton.superlayer != nil && [_aButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:A_FLAG];
-            _aTouch = touch;
-            updated = true;
-        } else if (_bButton.superlayer != nil && [_bButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:B_FLAG];
-            _bTouch = touch;
-            updated = true;
-        } else if (_xButton.superlayer != nil && [_xButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:X_FLAG];
-            _xTouch = touch;
-            updated = true;
-        } else if (_yButton.superlayer != nil && [_yButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:Y_FLAG];
-            _yTouch = touch;
-            updated = true;
-        } else if (_upButton.superlayer != nil && [_upButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:UP_FLAG];
+        if (slide >= 0 && [self isToggleSlide:slide]) {
+            // Tap-to-toggle: each tap latches or releases the button
+            _latched[slide] = !_latched[slide];
+            [_latchTouches addObject:touch];
+            if (!_latched[slide]) {
+                [self pressHaptic];
+            }
+        } else if (slide >= 0) {
+            [_buttonTouches setObject:@(slide) forKey:touch];
+        } else if ((dpad = [self dpadLayerAt:touchLocation]) != nil) {
+            [_controllerSupport setButtonFlag:_controller flags:[self flagForDpadLayer:dpad]];
+            [self highlightDpad:dpad];
             _dpadTouch = touch;
             updated = true;
-        } else if (_downButton.superlayer != nil && [_downButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:DOWN_FLAG];
-            _dpadTouch = touch;
-            updated = true;
-        } else if (_leftButton.superlayer != nil && [_leftButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:LEFT_FLAG];
-            _dpadTouch = touch;
-            updated = true;
-        } else if (_rightButton.superlayer != nil && [_rightButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:RIGHT_FLAG];
-            _dpadTouch = touch;
-            updated = true;
-        } else if (_startButton.superlayer != nil && [_startButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:PLAY_FLAG];
-            _startTouch = touch;
-            updated = true;
-        } else if (_selectButton.superlayer != nil && [_selectButton.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:BACK_FLAG];
-            _selectTouch = touch;
-            updated = true;
-        } else if (_l1Button.superlayer != nil && [_l1Button.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:LB_FLAG];
-            _l1Touch = touch;
-            updated = true;
-        } else if (_r1Button.superlayer != nil && [_r1Button.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport setButtonFlag:_controller flags:RB_FLAG];
-            _r1Touch = touch;
-            updated = true;
-        } else if (_l2Button.superlayer != nil && [_l2Button.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport updateLeftTrigger:_controller left:0xFF];
-            _l2Touch = touch;
-            updated = true;
-        } else if (_r2Button.superlayer != nil && [_r2Button.presentationLayer hitTest:touchLocation]) {
-            [_controllerSupport updateRightTrigger:_controller right:0xFF];
-            _r2Touch = touch;
-            updated = true;
-        } else if (_l3Button.superlayer != nil && [_l3Button.presentationLayer hitTest:touchLocation]) {
+            [self pressHaptic];
+        } else if (_l3Button.superlayer != nil && CGRectContainsPoint(_l3Button.frame, touchLocation)) {
             if (l3Set) {
                 [_controllerSupport clearButtonFlag:_controller flags:LS_CLK_FLAG];
                 _l3Button.borderWidth = 0.0f;
@@ -1038,7 +1538,8 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
             l3Set = !l3Set;
             _l3Touch = touch;
             updated = true;
-        } else if (_r3Button.superlayer != nil && [_r3Button.presentationLayer hitTest:touchLocation]) {
+            [self pressHaptic];
+        } else if (_r3Button.superlayer != nil && CGRectContainsPoint(_r3Button.frame, touchLocation)) {
             if (r3Set) {
                 [_controllerSupport clearButtonFlag:_controller flags:RS_CLK_FLAG];
                 _r3Button.borderWidth = 0.0f;
@@ -1049,6 +1550,7 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
             r3Set = !r3Set;
             _r3Touch = touch;
             updated = true;
+            [self pressHaptic];
         } else if (_leftStick.superlayer != nil && [_leftStick.presentationLayer hitTest:touchLocation]) {
             if (l3TouchStart != nil) {
                 // Find elapsed time and convert to milliseconds
@@ -1059,6 +1561,7 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
                     updated = true;
                 }
             }
+            [self setLayer:_leftStick highlighted:YES];
             _lsTouch = touch;
             stickTouch = true;
         } else if (_rightStick.superlayer != nil && [_rightStick.presentationLayer hitTest:touchLocation]) {
@@ -1071,32 +1574,24 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
                     updated = true;
                 }
             }
+            [self setLayer:_rightStick highlighted:YES];
             _rsTouch = touch;
             stickTouch = true;
-        }
-        if (updated && !updatedBefore) {
-            buttonPressed = true;
-        }
-        if (!updated && !stickTouch && [self isInDeadZone:touch]) {
+        } else if ([self isInDeadZone:touch]) {
             [_deadTouches addObject:touch];
             updated = true;
         }
     }
+    NSInteger newlyPressed = 0;
+    if ([self syncSlideButtons:&newlyPressed]) {
+        updated = true;
+    }
+    if (newlyPressed > 0) {
+        [self pressHaptic];
+    }
     if (updated) {
         [_controllerSupport updateFinished:_controller];
     }
-#if !TARGET_OS_TV
-    // A tap you can feel for every button press
-    // Settings › Input › Haptics on button presses (on unless turned off)
-    id hapticsSetting = [[NSUserDefaults standardUserDefaults] objectForKey:@"mnHapticsEnabled"];
-    if (buttonPressed && (hapticsSetting == nil || [hapticsSetting boolValue])) {
-        if (_pressHaptic == nil) {
-            _pressHaptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-        }
-        [_pressHaptic impactOccurredWithIntensity:0.8];
-        [_pressHaptic prepare];
-    }
-#endif
     return updated || stickTouch;
 }
 
@@ -1108,60 +1603,35 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
     BOOL updated = false;
     BOOL touched = false;
     for (UITouch* touch in touches) {
-        if (touch == _aTouch) {
-            [_controllerSupport clearButtonFlag:_controller flags:A_FLAG];
-            _aTouch = nil;
-            updated = true;
-        } else if (touch == _bTouch) {
-            [_controllerSupport clearButtonFlag:_controller flags:B_FLAG];
-            _bTouch = nil;
-            updated = true;
-        } else if (touch == _xTouch) {
-            [_controllerSupport clearButtonFlag:_controller flags:X_FLAG];
-            _xTouch = nil;
-            updated = true;
-        } else if (touch == _yTouch) {
-            [_controllerSupport clearButtonFlag:_controller flags:Y_FLAG];
-            _yTouch = nil;
-            updated = true;
+        if ([_buttonTouches objectForKey:touch] != nil) {
+            [_buttonTouches removeObjectForKey:touch];
+            touched = true;
+        } else if ([_latchTouches containsObject:touch]) {
+            [_latchTouches removeObject:touch];
+            touched = true;
         } else if (touch == _dpadTouch) {
             [_controllerSupport clearButtonFlag:_controller
                                           flags:UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG];
+            [self highlightDpad:nil];
             _dpadTouch = nil;
             updated = true;
-        } else if (touch == _startTouch) {
-            [_controllerSupport clearButtonFlag:_controller flags:PLAY_FLAG];
-            _startTouch = nil;
-            updated = true;
-        } else if (touch == _selectTouch) {
-            [_controllerSupport clearButtonFlag:_controller flags:BACK_FLAG];
-            _selectTouch = nil;
-            updated = true;
-        } else if (touch == _l1Touch) {
-            [_controllerSupport clearButtonFlag:_controller flags:LB_FLAG];
-            _l1Touch = nil;
-            updated = true;
-        } else if (touch == _r1Touch) {
-            [_controllerSupport clearButtonFlag:_controller flags:RB_FLAG];
-            _r1Touch = nil;
-            updated = true;
-        } else if (touch == _l2Touch) {
-            [_controllerSupport updateLeftTrigger:_controller left:0];
-            _l2Touch = nil;
-            updated = true;
-        } else if (touch == _r2Touch) {
-            [_controllerSupport updateRightTrigger:_controller right:0];
-            _r2Touch = nil;
-            updated = true;
         } else if (touch == _lsTouch) {
-            _leftStick.frame = CGRectMake(LS_CENTER_X - STICK_INNER_SIZE / 2, LS_CENTER_Y - STICK_INNER_SIZE / 2, STICK_INNER_SIZE, STICK_INNER_SIZE);
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            _leftStick.position = CGPointMake(LS_CENTER_X, LS_CENTER_Y);
+            [CATransaction commit];
+            [self setLayer:_leftStick highlighted:NO];
             [_controllerSupport updateLeftStick:_controller x:0 y:0];
             [_controllerSupport clearButtonFlag:_controller flags:LS_CLK_FLAG];
             l3TouchStart = [NSDate date];
             _lsTouch = nil;
             updated = true;
         } else if (touch == _rsTouch) {
-            _rightStick.frame = CGRectMake(RS_CENTER_X - STICK_INNER_SIZE / 2, RS_CENTER_Y - STICK_INNER_SIZE / 2, STICK_INNER_SIZE, STICK_INNER_SIZE);
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            _rightStick.position = CGPointMake(RS_CENTER_X, RS_CENTER_Y);
+            [CATransaction commit];
+            [self setLayer:_rightStick highlighted:NO];
             [_controllerSupport updateRightStick:_controller x:0 y:0];
             [_controllerSupport clearButtonFlag:_controller flags:RS_CLK_FLAG];
             r3TouchStart = [NSDate date];
@@ -1180,6 +1650,9 @@ static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
             [_deadTouches removeObject:touch];
             updated = true;
         }
+    }
+    if ([self syncSlideButtons:NULL]) {
+        updated = true;
     }
     if (updated) {
         [_controllerSupport updateFinished:_controller];

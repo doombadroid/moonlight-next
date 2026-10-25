@@ -166,6 +166,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     /// Read by the input deck and the on-screen controls on every press.
     @AppStorage("mnHapticsEnabled") private var hapticsEnabled = true
+    @AppStorage("mnOSCPressHighlight") private var pressHighlight = true
     @AppStorage("mnTrackpadSpeed") private var trackpadSpeed = 2.0
     @AppStorage("mnPhoneRumble") private var phoneRumble = true
     @AppStorage("mnPictureInPicture") private var pictureInPicture = true
@@ -246,6 +247,7 @@ struct SettingsView: View {
                     Toggle("Swap A/B and X/Y", isOn: $store.swapABXYButtons)
                     Toggle("Citrix X1 mouse", isOn: $store.btMouseSupport)
                     Toggle("Haptics on button presses", isOn: $hapticsEnabled)
+                    Toggle("Highlight pressed buttons", isOn: $pressHighlight)
                     Toggle("Phone rumble without a controller", isOn: $phoneRumble)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
