@@ -231,7 +231,13 @@ enum GyroSettings {
         }
     }
 
+    private var ticksSinceLog = 0
+    private var mouseSinceLog = (x: 0, y: 0)
+    private var lastAimGate = "none"
+
     private func tick() {
+        ticksSinceLog += 1
+        logAxes(motion.deviceMotion, now: CACurrentMediaTime())
         guard UIApplication.shared.applicationState == .active else {
             // In the background (kept alive, picture in picture) the phone moving in a pocket
             // mustn't aim or steer: let go once and wait
@@ -245,7 +251,6 @@ enum GyroSettings {
         lastTick = now
         let device = motion.deviceMotion
         let buttonAllows = pollGyroButton()
-        logAxes(device, now: now)
 
         if let device, hostWantsMotion {
             sendHostMotion(device, gyroOn: buttonAllows && !MNGyro.isPaused)
@@ -263,8 +268,12 @@ enum GyroSettings {
     /// right/down map into the screen's fixed (panel) space, and the raw gravity and rotation in
     /// CoreMotion's device frame. Used to check the axis mapping on each Duo display.
     private func logAxes(_ device: CMDeviceMotion?, now: Double) {
-        guard let device, now - lastAxesLog >= 1, let window = view?.window, let scene = window.windowScene else { return }
+        guard now - lastAxesLog >= 1 else { return }
         lastAxesLog = now
+        let ticks = ticksSinceLog, moved = mouseSinceLog
+        ticksSinceLog = 0; mouseSinceLog = (0, 0)
+        Self.axesLog.notice("gate ticks/s=\(ticks, privacy: .public) mouse=(\(moved.x, privacy: .public),\(moved.y, privacy: .public)) app=\(UIApplication.shared.applicationState.rawValue, privacy: .public) motionActive=\(self.motion.isDeviceMotionActive, privacy: .public) \(self.lastAimGate, privacy: .public)")
+        guard let device, let window = view?.window, let scene = window.windowScene else { return }
         let screen = scene.screen
         let origin = window.convert(CGPoint.zero, to: screen.fixedCoordinateSpace)
         let rightPt = window.convert(CGPoint(x: 100, y: 0), to: screen.fixedCoordinateSpace)
@@ -272,7 +281,7 @@ enum GyroSettings {
         let g = device.gravity, r = device.rotationRate
         let axes = screenAxes()
         let message = "axes orient=\(scene.interfaceOrientation.rawValue) win=\(Int(window.bounds.width))x\(Int(window.bounds.height)) fixed=\(Int(screen.fixedCoordinateSpace.bounds.width))x\(Int(screen.fixedCoordinateSpace.bounds.height)) native=\(Int(screen.nativeBounds.width))x\(Int(screen.nativeBounds.height)) rightInFixed=(\(Int(rightPt.x - origin.x)),\(Int(rightPt.y - origin.y))) downInFixed=(\(Int(downPt.x - origin.x)),\(Int(downPt.y - origin.y))) mappedRight=(\(axes.right.x),\(axes.right.y)) g=(\(String(format: "%.2f,%.2f,%.2f", g.x, g.y, g.z))) r=(\(String(format: "%.2f,%.2f,%.2f", r.x, r.y, r.z)))"
-        Self.axesLog.info("\(message, privacy: .public)")
+        Self.axesLog.notice("\(message, privacy: .public)")
     }
 
     // MARK: Host motion
@@ -324,6 +333,7 @@ enum GyroSettings {
         let mode = aimMode
         // With a gyro button on screen, holding it is what turns aiming on
         let allowed = aimWidgetShown ? widgetAim != nil : (!MNGyro.isPaused && buttonAllows && triggerAllows())
+        lastAimGate = "mode=\(mode.rawValue) allowed=\(allowed) paused=\(MNGyro.isPaused) button=\(buttonAllows) trigger=\(triggerAllows()) widgetShown=\(aimWidgetShown) widgetAim=\(widgetAim != nil) pauses=\(widgetPauses) device=\(device != nil) source=\(GyroSettings.source.rawValue)"
         guard mode != .off, allowed, widgetPauses == 0, let rates = aimRates(device) else {
             releaseStick()
             return
@@ -347,6 +357,7 @@ enum GyroSettings {
             let sx = dx.rounded(.towardZero), sy = dy.rounded(.towardZero)
             remainder = (dx - sx, dy - sy)
             MNInput.mouseMoveX(Int16(clamping: Int(sx)), y: Int16(clamping: Int(sy)))
+            mouseSinceLog.x += Int(sx); mouseSinceLog.y += Int(sy)
         case .rightStick:
             // stick y is up-positive
             let stick = MNGyro.shapeStick(x: horizontal * stickPerRadianPerSecond, y: -vertical * stickPerRadianPerSecond, minimum: GyroSettings.minStick)
