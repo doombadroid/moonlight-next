@@ -25,6 +25,53 @@ Requires iOS 17 or later. The iPhone Duo features need iOS 27.1.
 - **Folded gamepad.** On the outer display the on-screen controls are packed to the edges and keep clear of the camera hole.
 - **Layouts per posture.** Control layouts are saved separately for the folded, phone-landscape and unfolded postures, and optionally per game.
 
+## Screenshots
+
+iPhone Duo, folded and unfolded:
+
+<p>
+<img src="docs/screenshots/duo-launcher-folded.webp" alt="MoonLume's launcher on the folded iPhone Duo, showing a PC and its games" height="360">
+<img src="docs/screenshots/duo-race-folded.webp" alt="SuperTuxKart streaming on the folded iPhone Duo with the on-screen gamepad" height="360">
+</p>
+<p>
+<img src="docs/screenshots/duo-race-unfolded.webp" alt="SuperTuxKart streaming full screen on the unfolded iPhone Duo" width="49%">
+</p>
+
+Half-folded (tabletop), with the keyboard and trackpad deck or the gamepad deck on the lower half:
+
+<p>
+<img src="docs/screenshots/duo-tabletop-keyboard.webp" alt="The half-folded iPhone Duo streaming SuperTuxKart above the keyboard and trackpad deck" width="49%">
+<img src="docs/screenshots/duo-tabletop-gamepad.webp" alt="The half-folded iPhone Duo streaming SuperTuxKart above the gamepad deck" width="49%">
+</p>
+
+Standard iPhone (preview from the simulator's demo mode; final art still to come):
+
+<p>
+<img src="docs/screenshots/iphone/01-launcher.webp" alt="MoonLume's launcher on an iPhone, showing a PC and its games" height="420">
+<img src="docs/screenshots/iphone/02-stream-land.webp" alt="A stream on an iPhone in landscape with the on-screen gamepad" height="200">
+<img src="docs/screenshots/iphone/04-edit-controls-land.webp" alt="Edit Controls on an iPhone: the layout editor bar over the on-screen gamepad" height="200">
+</p>
+<p>
+<img src="docs/screenshots/iphone/04b-widget-picker-land.webp" alt="The Add Widget picker on an iPhone" height="200">
+<img src="docs/screenshots/iphone/05-input-deck-land.webp" alt="The keyboard and trackpad deck on an iPhone" height="200">
+</p>
+
+<details>
+<summary>App Store screenshots (iPhone Duo)</summary>
+
+<p>
+<img src="docs/screenshots/appstore/iphone-duo-inner-1-race-unfolded.webp" alt="App Store screenshot: iphone duo inner 1 race unfolded" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-inner-2-tabletop-keyboard.webp" alt="App Store screenshot: iphone duo inner 2 tabletop keyboard" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-inner-3-tabletop-keyboard-flat.webp" alt="App Store screenshot: iphone duo inner 3 tabletop keyboard flat" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-inner-4-tabletop-gamepad.webp" alt="App Store screenshot: iphone duo inner 4 tabletop gamepad" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-inner-5-tabletop-gamepad-flat.webp" alt="App Store screenshot: iphone duo inner 5 tabletop gamepad flat" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-outer-1-launcher.webp" alt="App Store screenshot: iphone duo outer 1 launcher" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-outer-2-race-folded.webp" alt="App Store screenshot: iphone duo outer 2 race folded" height="300">
+</p>
+</details>
+
+<sub>Device frames are from Apple Design Resources. The game shown is [SuperTuxKart](https://supertuxkart.net) (GPL-3.0, art CC-BY-SA), streamed from a Linux PC running Sunshine.</sub>
+
 ## Features
 
 ### Launcher
