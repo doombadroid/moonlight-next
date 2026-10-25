@@ -5,6 +5,7 @@ Every gamepad PNG is redrawn at its existing pixel size, so OnScreenControls' la
 (which sizes buttons from the images) is unchanged.
 
     python3 tools/gen-eclipse-art.py --font /path/to/Inter-SemiBold.ttf
+    python3 tools/gen-eclipse-art.py --icon-only
 """
 import argparse
 import json
@@ -90,15 +91,39 @@ def gamepad(font_path):
 
 
 def icon():
-    """Crescent moon in the accent colour on true black."""
+    """"Lume play" (option G, picked 10/25): a crescent with three light trails behind it and a
+    white play triangle in its bite, on true black. Geometry in a 100-unit square, as drawn on
+    the icon-options canvas."""
     N = 1024 * SS
+    u = N / 100  # one canvas unit in pixels
     im = Image.new("RGBA", (N, N), (0, 0, 0, 255))
     d = ImageDraw.Draw(im)
-    r = N * 0.30
-    cx, cy = N * 0.5, N * 0.5
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=ACCENT)
-    off = r * 0.42
-    d.ellipse([cx - r + off, cy - r - off * 0.55, cx + r + off, cy + r - off * 0.55], fill=(0, 0, 0, 255))
+
+    def disk(cx, cy, r, fill):
+        d.ellipse([(cx - r) * u, (cy - r) * u, (cx + r) * u, (cy + r) * u], fill=fill)
+
+    def dim(c, opacity):  # the accent at an opacity, over black
+        return tuple(round(v * opacity) for v in c[:3]) + (255,)
+
+    # Crescent: the accent disk with a black disk biting out of its upper right
+    disk(60, 50, 26, ACCENT)
+    disk(71, 43, 23, (0, 0, 0, 255))
+
+    # Light trails, round-capped, fading toward the back
+    for x1, x2, y, opacity in ((14, 34, 40, 0.9), (20, 34, 51, 0.6), (26, 36, 62, 0.35)):
+        c = dim(ACCENT, opacity)
+        d.line([(x1 * u, y * u), (x2 * u, y * u)], fill=c, width=round(4 * u))
+        disk(x1, y, 2, c)
+        disk(x2, y, 2, c)
+
+    # Play triangle in the bite, corners rounded by a 2.4-unit stroke
+    tri = [(63, 36.5), (63, 51.5), (75.5, 44)]
+    white = (0xF2, 0xF2, 0xF2, 255)
+    d.polygon([(x * u, y * u) for x, y in tri], fill=white)
+    for a, b in zip(tri, tri[1:] + tri[:1]):
+        d.line([(a[0] * u, a[1] * u), (b[0] * u, b[1] * u)], fill=white, width=round(2.4 * u))
+    for x, y in tri:
+        disk(x, y, 1.2, white)
     out = im.resize((1024, 1024), Image.LANCZOS).convert("RGB")
 
     folder = ASSETS / "AppIcon.appiconset"
@@ -114,7 +139,11 @@ def icon():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--font", required=True, help="Inter-SemiBold.ttf (or any TTF)")
+    ap.add_argument("--font", help="Inter-SemiBold.ttf (or any TTF); needed unless --icon-only")
+    ap.add_argument("--icon-only", action="store_true", help="only redraw the app icon")
     args = ap.parse_args()
-    gamepad(args.font)
+    if not args.icon_only:
+        if not args.font:
+            ap.error("--font is required unless --icon-only")
+        gamepad(args.font)
     icon()
