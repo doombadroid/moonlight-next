@@ -124,6 +124,7 @@ static void MNKBDiag(NSString* what) {
         [_streamView showOnScreenControls];
         // The full gamepad even if the simulator reports a (virtual) controller
         [[_streamView layoutControls] setLevel:OnScreenControlsLevelFull];
+        [_streamView resignFirstResponder]; // TEMP experiment: does the keyboard come from the first responder?
     }
 #endif
 }
