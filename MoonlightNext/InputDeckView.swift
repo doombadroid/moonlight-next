@@ -115,25 +115,34 @@ private enum VK {
     static let enter: Int16 = 0x0D, space: Int16 = 0x20, shift: Int16 = 0xA0, ctrl: Int16 = 0xA2
     static let alt: Int16 = 0xA4, win: Int16 = 0x5B, comma: Int16 = 0xBC, period: Int16 = 0xBE
     static let left: Int16 = 0x25, up: Int16 = 0x26, right: Int16 = 0x27, down: Int16 = 0x28
+    static let delete: Int16 = 0x2E, home: Int16 = 0x24, end: Int16 = 0x23, pageUp: Int16 = 0x21, pageDown: Int16 = 0x22
+    static func f(_ n: Int) -> Int16 { Int16(0x70 + n - 1) }
 
     /// A–Z and 0–9 share their ASCII codes.
     static func char(_ c: Character) -> Int16 { Int16(c.asciiValue ?? 0) }
 }
 
 private struct Key: Identifiable {
-    enum Kind { case normal, modifier(MNKeyModifiers), caps, accent }
+    enum Kind { case normal, modifier(MNKeyModifiers), caps, accent, fn }
     let id = UUID()
     let label: String
     let vk: Int16
     var weight: CGFloat = 1
     var kind: Kind = .normal
     var accessibility: String? = nil
+    /// What the key sends while fn is latched (F-keys, Delete, Home / End / Page Up / Down)
+    var fnLabel: String? = nil
+    var fnVK: Int16? = nil
 }
 
 /// Modifiers latch for one keypress (tap Shift, then a letter), like a phone keyboard;
 /// Caps Lock is sent as a real toggle to the host.
 private final class KeyboardState: ObservableObject {
     @Published var latched: MNKeyModifiers = []
+    /// fn latches for one keypress too
+    @Published var fnOn = false
+    /// What each held key actually sent, so the key-up matches even after fn clears
+    private var sent: [UUID: Int16] = [:]
 
     static let modifierKeys: [(MNKeyModifiers, Int16)] = [
         (.shift, VK.shift), (.ctrl, VK.ctrl), (.alt, VK.alt), (.meta, VK.win),
@@ -144,22 +153,31 @@ private final class KeyboardState: ObservableObject {
         case .modifier(let m):
             Feedback.modifierToggle()
             if latched.contains(m) { latched.remove(m) } else { latched.insert(m) }
+        case .fn:
+            Feedback.modifierToggle()
+            fnOn.toggle()
         default:
             Feedback.keyPress()
-            for (m, vk) in Self.modifierKeys where latched.contains(m) {
-                MNInput.keyDown(vk, modifiers: latched)
+            let vk = fnOn ? (key.fnVK ?? key.vk) : key.vk
+            sent[key.id] = vk
+            for (m, mvk) in Self.modifierKeys where latched.contains(m) {
+                MNInput.keyDown(mvk, modifiers: latched)
             }
-            MNInput.keyDown(key.vk, modifiers: latched)
+            MNInput.keyDown(vk, modifiers: latched)
         }
     }
 
     func release(_ key: Key) {
-        if case .modifier = key.kind { return }
-        MNInput.keyUp(key.vk, modifiers: latched)
+        switch key.kind {
+        case .modifier, .fn: return
+        default: break
+        }
+        MNInput.keyUp(sent.removeValue(forKey: key.id) ?? key.vk, modifiers: latched)
         for (m, vk) in Self.modifierKeys.reversed() where latched.contains(m) {
             MNInput.keyUp(vk, modifiers: [])
         }
         latched = []
+        fnOn = false
     }
 }
 
@@ -167,25 +185,40 @@ private final class KeyboardState: ObservableObject {
 private enum Layouts {
     static func letters(_ s: String) -> [Key] { s.map { Key(label: String($0), vk: VK.char($0)) } }
     static let esc = Key(label: "esc", vk: VK.escape, weight: 1.2, accessibility: "Escape")
-    static let backspace = Key(label: "⌫", vk: VK.backspace, weight: 1.5, accessibility: "Backspace")
+    static let backspace = Key(label: "⌫", vk: VK.backspace, weight: 1.5, accessibility: "Backspace",
+                               fnLabel: "del", fnVK: VK.delete)
     static let tab = Key(label: "tab", vk: VK.tab, weight: 1.5, accessibility: "Tab")
     static let ret = Key(label: "return", vk: VK.enter, weight: 1.8, kind: .accent, accessibility: "Return")
     static func shift(_ w: CGFloat) -> Key { Key(label: "shift", vk: VK.shift, weight: w, kind: .modifier(.shift), accessibility: "Shift") }
     static let ctrl = Key(label: "ctrl", vk: VK.ctrl, weight: 1.2, kind: .modifier(.ctrl), accessibility: "Control")
-    static let win = Key(label: "win", vk: VK.win, weight: 1.2, kind: .modifier(.meta), accessibility: "Windows")
+    // One key on every host OS: Windows key on a PC, Super on Linux, Command on a Mac
+    static let win = Key(label: "win", vk: VK.win, weight: 1.2, kind: .modifier(.meta), accessibility: "Windows, Super or Command")
+    static let fn = Key(label: "fn", vk: 0, weight: 1, kind: .fn, accessibility: "Function")
     static let alt = Key(label: "alt", vk: VK.alt, weight: 1.2, kind: .modifier(.alt), accessibility: "Alt")
     static func space(_ w: CGFloat) -> Key { Key(label: "", vk: VK.space, weight: w, accessibility: "Space") }
     static let arrows = [
-        Key(label: "←", vk: VK.left, accessibility: "Left"), Key(label: "↑", vk: VK.up, accessibility: "Up"),
-        Key(label: "↓", vk: VK.down, accessibility: "Down"), Key(label: "→", vk: VK.right, accessibility: "Right"),
+        Key(label: "←", vk: VK.left, accessibility: "Left", fnLabel: "home", fnVK: VK.home),
+        Key(label: "↑", vk: VK.up, accessibility: "Up", fnLabel: "pg↑", fnVK: VK.pageUp),
+        Key(label: "↓", vk: VK.down, accessibility: "Down", fnLabel: "pg↓", fnVK: VK.pageDown),
+        Key(label: "→", vk: VK.right, accessibility: "Right", fnLabel: "end", fnVK: VK.end),
     ]
+    /// 1–0, which become F1–F10 with fn
+    static let digits: [Key] = "1234567890".enumerated().map { i, c in
+        Key(label: String(c), vk: VK.char(c), fnLabel: "F\(i + 1)", fnVK: VK.f(i + 1))
+    }
+    /// Q and W carry F11 and F12
+    static let topLetters: [Key] = letters("QWERTYUIOP").enumerated().map { i, key in
+        guard i < 2 else { return key }
+        return Key(label: key.label, vk: key.vk, fnLabel: "F\(i + 11)", fnVK: VK.f(i + 11))
+    }
 
     static let full: [[Key]] = [
-        [esc] + letters("1234567890") + [backspace],
-        [tab] + letters("QWERTYUIOP"),
+        [esc] + digits + [backspace],
+        [tab] + topLetters,
         [Key(label: "caps", vk: VK.caps, weight: 1.7, kind: .caps, accessibility: "Caps lock")] + letters("ASDFGHJKL") + [ret],
         [shift(2.2)] + letters("ZXCVBNM") + [Key(label: ",", vk: VK.comma), Key(label: ".", vk: VK.period), shift(1.6)],
-        [ctrl, win, alt, space(4.8)] + arrows,
+        [fn, Key(label: "ctrl", vk: VK.ctrl, weight: 1.1, kind: .modifier(.ctrl), accessibility: "Control"),
+         win, Key(label: "alt", vk: VK.alt, weight: 1.1, kind: .modifier(.alt), accessibility: "Alt"), space(4.0)] + arrows,
     ]
 }
 
@@ -205,7 +238,8 @@ private struct KeyGrid: View {
                     let unit = (geo.size.width - gaps) / row.reduce(0) { $0 + $1.weight }
                     HStack(spacing: 5) {
                         ForEach(row) { key in
-                            KeyCap(key: key, latched: isLatched(key), pressed: pressed.contains(key.id))
+                            KeyCap(key: key, latched: isLatched(key), pressed: pressed.contains(key.id),
+                                   label: state.fnOn ? (key.fnLabel ?? key.label) : key.label)
                                 .frame(width: unit * key.weight)
                                 .zIndex(pressed.contains(key.id) ? 1 : 0)
                                 .onPress(down: {
@@ -224,8 +258,11 @@ private struct KeyGrid: View {
     }
 
     private func isLatched(_ key: Key) -> Bool {
-        if case .modifier(let m) = key.kind { return state.latched.contains(m) }
-        return false
+        switch key.kind {
+        case .modifier(let m): return state.latched.contains(m)
+        case .fn: return state.fnOn
+        default: return false
+        }
     }
 }
 
@@ -248,13 +285,16 @@ private struct KeyCap: View {
     let key: Key
     let latched: Bool
     var pressed = false
+    /// The fn layer's label while fn is latched
+    var label: String? = nil
 
     var body: some View {
-        let isLetter = key.label.count == 1 && key.label.first!.isLetter || key.label.first?.isNumber == true
+        let text = label ?? key.label
+        let isLetter = text.count == 1 && text.first!.isLetter || (text.count == 1 && text.first?.isNumber == true)
         let accent: Bool = { if case .accent = key.kind { return true }; return false }()
         let lit = accent || latched || pressed
-        Text(key.label)
-            .font(.system(size: isLetter || key.label.count == 1 ? 15 : 12, weight: pressed ? .semibold : .medium))
+        Text(text)
+            .font(.system(size: isLetter || text.count == 1 ? 15 : 12, weight: pressed ? .semibold : .medium))
             .foregroundStyle(lit ? Color.black : (isLetter ? Theme.text : Color(hex: 0xA3A3AA)))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(RoundedRectangle(cornerRadius: 7)
@@ -329,7 +369,8 @@ private struct TrackpadSurface: UIViewRepresentable {
 
 final class TrackpadUIView: UIView {
     /// Host pixels per point of finger travel.
-    private let pointerSpeed: CGFloat = 2.0
+    /// Settings › Input › Trackpad speed (host pixels per point of finger travel)
+    private var pointerSpeed: CGFloat { CGFloat(UserDefaults.standard.object(forKey: "mnTrackpadSpeed") as? Double ?? 2.0) }
     /// High-res scroll units (120 = one notch) per point.
     private let scrollSpeed: CGFloat = 4.0
     private var remainder = CGPoint.zero

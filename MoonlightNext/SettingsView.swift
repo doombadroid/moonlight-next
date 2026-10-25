@@ -163,6 +163,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     /// Read by the input deck and the on-screen controls on every press.
     @AppStorage("mnHapticsEnabled") private var hapticsEnabled = true
+    @AppStorage("mnTrackpadSpeed") private var trackpadSpeed = 2.0
     @AppStorage(GyroSettings.modeKey) private var gyroMode = GyroSettings.Mode.off.rawValue
     @AppStorage(GyroSettings.activationKey) private var gyroActivation = GyroSettings.Activation.always.rawValue
     @AppStorage(GyroSettings.sensitivityKey) private var gyroSensitivity = 1.5
@@ -236,6 +237,14 @@ struct SettingsView: View {
                     Toggle("Swap A/B and X/Y", isOn: $store.swapABXYButtons)
                     Toggle("Citrix X1 mouse", isOn: $store.btMouseSupport)
                     Toggle("Haptics on button presses", isOn: $hapticsEnabled)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Trackpad speed")
+                            Spacer()
+                            Text(String(format: "%.2g×", trackpadSpeed)).foregroundStyle(Theme.muted)
+                        }
+                        Slider(value: $trackpadSpeed, in: 0.5...5, step: 0.25)
+                    }
                 } header: {
                     Theme.label("Input")
                 }
