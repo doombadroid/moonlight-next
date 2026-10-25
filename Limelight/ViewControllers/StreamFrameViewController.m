@@ -193,7 +193,8 @@
 #if TARGET_OS_TV
     [_tipLabel setText:@"Tip: Tap the Play/Pause button on the Apple TV Remote to disconnect from your PC"];
 #else
-    [_tipLabel setText:@"Tip: Swipe from the left edge or use the ••• menu to disconnect"];
+    [_tipLabel setText:MNTouchPrefs.edgeSwipeDisconnects ? @"Tip: Swipe from the left edge or use the ••• menu to disconnect"
+                                                          : @"Tip: Use the ••• menu to disconnect"];
 #endif
     
     [_tipLabel sizeToFit];
