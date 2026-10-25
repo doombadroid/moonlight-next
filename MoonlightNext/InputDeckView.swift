@@ -24,11 +24,12 @@ struct InputDeckView: View {
     let onHide: () -> Void
 
     private enum Mode: String, CaseIterable {
-        case keyboard = "Keyboard & trackpad"
+        case keys = "Keys"
+        case split = "Split"
         case gamepad = "Gamepad"
     }
 
-    @AppStorage("inputDeckMode") private var mode = Mode.keyboard.rawValue
+    @AppStorage("inputDeckMode") private var mode = Mode.keys.rawValue
 
     var body: some View {
         VStack(spacing: 10) {
@@ -37,7 +38,7 @@ struct InputDeckView: View {
                     ForEach(Mode.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 360)
+                .frame(maxWidth: 300)
                 Spacer()
                 Button(action: onHide) {
                     Image(systemName: "chevron.down")
@@ -48,17 +49,19 @@ struct InputDeckView: View {
                 }
                 .accessibilityLabel("Hide input deck")
             }
-            if mode == Mode.gamepad.rawValue {
-                GamepadPanel()
-            } else {
-                KeyboardPanel()
-                TrackpadPanel()
+            switch Mode(rawValue: mode) {
+            case .gamepad: GamepadPanel()
+            case .split: SplitKeyboardDeck()
+            default: FullKeyboardDeck()
             }
         }
         .padding(.horizontal, 14)
         .padding(.top, 12)
-        .padding(.bottom, 16)
+        // Down to the bottom edge: the stream defers the home-indicator swipe, so the space
+        // the safe area would leave empty is usable
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea(.container, edges: .bottom)
         .background(Color(hex: 0x050506).ignoresSafeArea())
         .preferredColorScheme(.dark)
     }
@@ -162,36 +165,64 @@ private final class KeyboardState: ObservableObject {
     }
 }
 
-private struct KeyboardPanel: View {
-    @StateObject private var state = KeyboardState()
-    @SwiftUI.State private var pressed: Set<UUID> = []
+// Layouts are static so key ids stay stable across re-renders (the pressed set is keyed by them)
+private enum Layouts {
+    static func letters(_ s: String) -> [Key] { s.map { Key(label: String($0), vk: VK.char($0)) } }
+    static let esc = Key(label: "esc", vk: VK.escape, weight: 1.2, accessibility: "Escape")
+    static let backspace = Key(label: "⌫", vk: VK.backspace, weight: 1.5, accessibility: "Backspace")
+    static let tab = Key(label: "tab", vk: VK.tab, weight: 1.5, accessibility: "Tab")
+    static let ret = Key(label: "return", vk: VK.enter, weight: 1.8, kind: .accent, accessibility: "Return")
+    static func shift(_ w: CGFloat) -> Key { Key(label: "shift", vk: VK.shift, weight: w, kind: .modifier(.shift), accessibility: "Shift") }
+    static let ctrl = Key(label: "ctrl", vk: VK.ctrl, weight: 1.2, kind: .modifier(.ctrl), accessibility: "Control")
+    static let win = Key(label: "win", vk: VK.win, weight: 1.2, kind: .modifier(.meta), accessibility: "Windows")
+    static let alt = Key(label: "alt", vk: VK.alt, weight: 1.2, kind: .modifier(.alt), accessibility: "Alt")
+    static func space(_ w: CGFloat) -> Key { Key(label: "", vk: VK.space, weight: w, accessibility: "Space") }
+    static let arrows = [
+        Key(label: "←", vk: VK.left, accessibility: "Left"), Key(label: "↑", vk: VK.up, accessibility: "Up"),
+        Key(label: "↓", vk: VK.down, accessibility: "Down"), Key(label: "→", vk: VK.right, accessibility: "Right"),
+    ]
 
-    // Static so key ids stay stable across re-renders (the pressed set is keyed by them)
-    private static let rows: [[Key]] = {
-        func letters(_ s: String) -> [Key] { s.map { Key(label: String($0), vk: VK.char($0)) } }
-        return [
-            [Key(label: "esc", vk: VK.escape, weight: 1.2, accessibility: "Escape")] + letters("1234567890")
-                + [Key(label: "⌫", vk: VK.backspace, weight: 1.5, accessibility: "Backspace")],
-            [Key(label: "tab", vk: VK.tab, weight: 1.5, accessibility: "Tab")] + letters("QWERTYUIOP"),
-            [Key(label: "caps", vk: VK.caps, weight: 1.7, kind: .caps, accessibility: "Caps lock")] + letters("ASDFGHJKL")
-                + [Key(label: "return", vk: VK.enter, weight: 1.8, kind: .accent, accessibility: "Return")],
-            [Key(label: "shift", vk: VK.shift, weight: 2.2, kind: .modifier(.shift), accessibility: "Shift")] + letters("ZXCVBNM")
-                + [Key(label: ",", vk: VK.comma), Key(label: ".", vk: VK.period),
-                   Key(label: "shift", vk: VK.shift, weight: 1.6, kind: .modifier(.shift), accessibility: "Shift")],
-            [Key(label: "ctrl", vk: VK.ctrl, weight: 1.2, kind: .modifier(.ctrl), accessibility: "Control"),
-             Key(label: "win", vk: VK.win, weight: 1.2, kind: .modifier(.meta), accessibility: "Windows"),
-             Key(label: "alt", vk: VK.alt, weight: 1.2, kind: .modifier(.alt), accessibility: "Alt"),
-             Key(label: "", vk: VK.space, weight: 4.8, accessibility: "Space"),
-             Key(label: "←", vk: VK.left, accessibility: "Left"), Key(label: "↑", vk: VK.up, accessibility: "Up"),
-             Key(label: "↓", vk: VK.down, accessibility: "Down"), Key(label: "→", vk: VK.right, accessibility: "Right")],
-        ]
-    }()
+    static let full: [[Key]] = [
+        [esc] + letters("1234567890") + [backspace],
+        [tab] + letters("QWERTYUIOP"),
+        [Key(label: "caps", vk: VK.caps, weight: 1.7, kind: .caps, accessibility: "Caps lock")] + letters("ASDFGHJKL") + [ret],
+        [shift(2.2)] + letters("ZXCVBNM") + [Key(label: ",", vk: VK.comma), Key(label: ".", vk: VK.period), shift(1.6)],
+        [ctrl, win, alt, space(4.8)] + arrows,
+    ]
+
+    // Split for two thumbs: each half is what one thumb reaches
+    static let splitLeft: [[Key]] = [
+        [Key(label: "esc", vk: VK.escape, accessibility: "Escape")] + letters("12345"),
+        [Key(label: "tab", vk: VK.tab, weight: 1.2, accessibility: "Tab")] + letters("QWERT"),
+        letters("ASDFG"),
+        [shift(1.3)] + letters("ZXCVB"),
+        [Key(label: "ctrl", vk: VK.ctrl, kind: .modifier(.ctrl), accessibility: "Control"),
+         Key(label: "win", vk: VK.win, kind: .modifier(.meta), accessibility: "Windows"),
+         Key(label: "alt", vk: VK.alt, kind: .modifier(.alt), accessibility: "Alt"), space(2.6)],
+    ]
+    static let splitRight: [[Key]] = [
+        letters("67890") + [Key(label: "⌫", vk: VK.backspace, weight: 1.2, accessibility: "Backspace")],
+        letters("YUIOP"),
+        letters("HJKL") + [Key(label: "return", vk: VK.enter, weight: 1.6, kind: .accent, accessibility: "Return")],
+        letters("NM") + [Key(label: ",", vk: VK.comma), Key(label: ".", vk: VK.period),
+                         Key(label: "↑", vk: VK.up, accessibility: "Up")],
+        [space(2.6), Key(label: "←", vk: VK.left, accessibility: "Left"),
+         Key(label: "↓", vk: VK.down, accessibility: "Down"), Key(label: "→", vk: VK.right, accessibility: "Right")],
+    ]
+}
+
+/// Rows of keys sized to the width they're given, each row `keyHeight` tall.
+private struct KeyGrid: View {
+    let rows: [[Key]]
+    let keyHeight: CGFloat
+    @ObservedObject var state: KeyboardState
+    @Binding var pressed: Set<UUID>
 
     var body: some View {
         VStack(spacing: 6) {
-            ForEach(Self.rows.indices, id: \.self) { r in
+            ForEach(rows.indices, id: \.self) { r in
                 GeometryReader { geo in
-                    let row = Self.rows[r]
+                    let row = rows[r]
                     let gaps = CGFloat(row.count - 1) * 5
                     let unit = (geo.size.width - gaps) / row.reduce(0) { $0 + $1.weight }
                     HStack(spacing: 5) {
@@ -209,7 +240,7 @@ private struct KeyboardPanel: View {
                         }
                     }
                 }
-                .frame(height: 40)
+                .frame(height: keyHeight)
             }
         }
     }
@@ -217,6 +248,55 @@ private struct KeyboardPanel: View {
     private func isLatched(_ key: Key) -> Bool {
         if case .modifier(let m) = key.kind { return state.latched.contains(m) }
         return false
+    }
+}
+
+/// Full-width keyboard with the trackpad filling everything below it.
+private struct FullKeyboardDeck: View {
+    @StateObject private var state = KeyboardState()
+    @SwiftUI.State private var pressed: Set<UUID> = []
+
+    var body: some View {
+        VStack(spacing: 10) {
+            KeyGrid(rows: Layouts.full, keyHeight: 50, state: state, pressed: $pressed)
+            TrackpadPanel()
+        }
+    }
+}
+
+/// Two halves, one per thumb, each tilted toward its thumb; the trackpad is the whole space
+/// between them, with left / right click along its bottom edge like a laptop trackpad.
+private struct SplitKeyboardDeck: View {
+    @StateObject private var state = KeyboardState()
+    @SwiftUI.State private var pressed: Set<UUID> = []
+    private let tilt: Double = 5
+
+    var body: some View {
+        GeometryReader { geo in
+            let gap: CGFloat = 120
+            let half = (geo.size.width - gap - 24) / 2
+            HStack(alignment: .bottom, spacing: 12) {
+                KeyGrid(rows: Layouts.splitLeft, keyHeight: 50, state: state, pressed: $pressed)
+                    .frame(width: half)
+                    .rotationEffect(.degrees(tilt), anchor: .bottomTrailing)
+                VStack(spacing: 6) {
+                    TrackpadSurface()
+                        .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x0B0B0E)))
+                        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.lineStrong))
+                        .accessibilityLabel("Trackpad")
+                    HStack(spacing: 5) {
+                        ClickButton(title: "L click", button: .left, corners: (12, 4))
+                        ClickButton(title: "R click", button: .right, corners: (4, 12))
+                    }
+                    .frame(height: 44)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                KeyGrid(rows: Layouts.splitRight, keyHeight: 50, state: state, pressed: $pressed)
+                    .frame(width: half)
+                    .rotationEffect(.degrees(-tilt), anchor: .bottomLeading)
+            }
+            .frame(maxHeight: .infinity, alignment: .bottom)
+        }
     }
 }
 
@@ -254,6 +334,7 @@ private struct TrackpadPanel: View {
     var body: some View {
         HStack(spacing: 8) {
             ClickButton(title: "Left click", button: .left, corners: (12, 4))
+                .frame(width: 92)
             TrackpadSurface()
                 .overlay(alignment: .bottom) {
                     Text("Trackpad · tap to click · two fingers to scroll")
@@ -266,8 +347,9 @@ private struct TrackpadPanel: View {
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.lineStrong))
                 .accessibilityLabel("Trackpad")
             ClickButton(title: "Right click", button: .right, corners: (4, 12))
+                .frame(width: 92)
         }
-        .frame(maxHeight: .infinity)
+        .frame(minHeight: 60, maxHeight: .infinity)
     }
 }
 
@@ -281,8 +363,7 @@ private struct ClickButton: View {
         Text(title)
             .font(.system(size: 12))
             .foregroundStyle(Color(hex: 0xA3A3AA))
-            .frame(width: 92)
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(UnevenRoundedRectangle(topLeadingRadius: corners.0, bottomLeadingRadius: corners.0,
                                                bottomTrailingRadius: corners.1, topTrailingRadius: corners.1)
                 .fill(pressed ? Color(hex: 0x1E1E24) : Color(hex: 0x0F0F13)))
