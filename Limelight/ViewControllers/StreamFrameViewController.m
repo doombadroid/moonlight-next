@@ -777,6 +777,7 @@ static os_log_t DuoLog(void) {
     [MNGyro.shared stop];
     [MNPhoneRumble.shared stop];
     [MNControllerMouse.shared stop];
+    [MNDummyInput stop];
     [MNInput setControllerSupport:nil];
     [MNExternalDisplay.shared streamEnded];
     MNAudio.backgroundMuted = NO;
@@ -800,6 +801,12 @@ static os_log_t DuoLog(void) {
     }
     CGRect keyboard = [self.view convertRect:[notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue]
                          fromCoordinateSpace:self.view.window.windowScene.screen.coordinateSpace];
+    // Adapted from VoidLink (GPLv3), Input/StreamView.m: a set keyboard height (a fraction of the
+    // screen) for keyboards whose reported height is wrong (floating, third-party)
+    if (MNTouchExtras.keyboardHeight > 0) {
+        CGFloat height = self.view.bounds.size.height * MNTouchExtras.keyboardHeight;
+        keyboard = CGRectMake(0, CGRectGetMaxY(self.view.bounds) - height, self.view.bounds.size.width, height);
+    }
     // Where the tap was before any lift, plus room to see what's being typed into
     CGFloat anchor = [_streamView convertPoint:CGPointMake(0, [_streamView softKeyboardAnchorY]) toView:self.view].y + _keyboardLift;
     CGFloat lift = MIN(MAX(anchor + 48 - CGRectGetMinY(keyboard), 0), keyboard.size.height);
@@ -1081,6 +1088,11 @@ static os_log_t DuoLog(void) {
 #endif
         
         [self->_controllerSupport connectionEstablished];
+#if !TARGET_OS_TV
+        if (!self->_tornDown) {
+            [MNDummyInput startWithFps:self->_settings.framerate.intValue];
+        }
+#endif
         
         if (self->_settings.statsOverlay) {
             self->_statsUpdateTimer = [NSTimer scheduledTimerWithTimeInterval:1.0f

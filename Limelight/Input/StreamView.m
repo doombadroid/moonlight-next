@@ -27,7 +27,6 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     
     KeyboardInputField* keyInputField;
     BOOL isInputingText;
-    NSMutableSet* keysDown;
     
     float streamAspectRatio;
     
@@ -56,6 +55,13 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     NSMutableDictionary<NSValue*, NSNumber*>* nativeTouchIds;
     CGFloat softKeyboardAnchorY;
     UIPointerInteraction* pointerInteraction;
+    // The key row above the soft keyboard
+    MNKeyBar* keyBar;
+    // Native touch: fingers landing right of nativeSplit (a fraction of the width) move
+    // nativeSpeed times as far on the host
+    CGFloat nativeSpeed;
+    CGFloat nativeSplit;
+    NSMutableDictionary<NSValue*, NSValue*>* nativeFastTouches;
 #endif
 }
 
@@ -67,7 +73,6 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     
     TemporarySettings* settings = [[[DataManager alloc] init] getSettings];
     
-    keysDown = [[NSMutableSet alloc] init];
     keyInputField = [[KeyboardInputField alloc] initWithFrame:CGRectZero];
     [keyInputField setKeyboardType:UIKeyboardTypeDefault];
     [keyInputField setAutocorrectionType:UITextAutocorrectionTypeNo];
@@ -83,6 +88,9 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     touchMode = [MNTouchPrefs touchModeWithAbsolute:settings.absoluteTouchMode];
     self.touchInputDisabled = touchMode == MNTouchModeDisabled;
     nativeTouchIds = [[NSMutableDictionary alloc] init];
+    nativeFastTouches = [[NSMutableDictionary alloc] init];
+    nativeSpeed = MNTouchExtras.nativeSpeed;
+    nativeSplit = MNTouchExtras.nativeSplit;
     [MNMouse reset];
     if (touchMode == MNTouchModeTouchscreen || touchMode == MNTouchModeNative) {
         // Native touch falls back to this when the host can't take touch events
@@ -431,7 +439,8 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
             continue;
         }
 
-        CGPoint location = [self adjustCoordinatesForVideoArea:[touch locationInView:self]];
+        CGPoint point = [self nativeTouchPoint:touch key:key type:type pointerId:pointerId.unsignedIntValue];
+        CGPoint location = [self adjustCoordinatesForVideoArea:point];
         // 0 means the pressure is unknown (screens without force sensing)
         float pressure = touch.maximumPossibleForce > 0 ? touch.force / touch.maximumPossibleForce : 0.0f;
         LiSendTouchEvent(type, pointerId.unsignedIntValue,
@@ -439,9 +448,53 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
                          pressure, 0.0f, 0.0f, LI_ROT_UNKNOWN);
         if (type == LI_TOUCH_EVENT_UP || type == LI_TOUCH_EVENT_CANCEL) {
             [nativeTouchIds removeObjectForKey:key];
+            [nativeFastTouches removeObjectForKey:key];
         }
     }
     return YES;
+}
+
+// Adapted from VoidLink (GPLv3), Input/NativeTouchPointer.m: a finger that lands in the fast
+// zone (camera side in mobile-style games) moves nativeSpeed times as far as it travels. When
+// that runs off the screen, the host's touch lifts and lands again where the finger started,
+// so a camera swipe keeps turning.
+typedef struct {
+    CGPoint start;
+    CGPoint last;
+    CGPoint sent;
+} MNFastTouch;
+
+- (CGPoint)nativeTouchPoint:(UITouch*)touch key:(NSValue*)key type:(uint8_t)type pointerId:(uint32_t)pointerId {
+    CGPoint p = [touch locationInView:self];
+    if (type == LI_TOUCH_EVENT_DOWN) {
+        if (nativeSpeed != 1 && p.x > self.bounds.size.width * nativeSplit) {
+            MNFastTouch fast = { p, p, p };
+            nativeFastTouches[key] = [NSValue valueWithBytes:&fast objCType:@encode(MNFastTouch)];
+        }
+        return p;
+    }
+    NSValue* stored = nativeFastTouches[key];
+    if (stored == nil) {
+        return p;
+    }
+    MNFastTouch fast;
+    [stored getValue:&fast];
+    CGPoint sent = CGPointMake(fast.sent.x + (p.x - fast.last.x) * nativeSpeed,
+                               fast.sent.y + (p.y - fast.last.y) * nativeSpeed);
+    fast.last = p;
+    if (type == LI_TOUCH_EVENT_MOVE && !CGRectContainsPoint(self.bounds, sent)) {
+        CGSize videoSize = [self getVideoAreaSize];
+        CGPoint edge = [self adjustCoordinatesForVideoArea:sent];
+        LiSendTouchEvent(LI_TOUCH_EVENT_UP, pointerId, edge.x / videoSize.width, edge.y / videoSize.height,
+                         0.0f, 0.0f, 0.0f, LI_ROT_UNKNOWN);
+        CGPoint start = [self adjustCoordinatesForVideoArea:fast.start];
+        LiSendTouchEvent(LI_TOUCH_EVENT_DOWN, pointerId, start.x / videoSize.width, start.y / videoSize.height,
+                         0.0f, 0.0f, 0.0f, LI_ROT_UNKNOWN);
+        sent = fast.start;
+    }
+    fast.sent = sent;
+    nativeFastTouches[key] = [NSValue valueWithBytes:&fast objCType:@encode(MNFastTouch)];
+    return sent;
 }
 
 - (BOOL)softKeyboardShown {
@@ -564,21 +617,12 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
         keyInputField.delegate = self;
         keyInputField.text = @"0";
 #if !TARGET_OS_TV
-        // Prepare the toolbar above the keyboard for more options
-        UIToolbar *customToolbarView = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 44)];
-        
-        UIBarButtonItem *doneBarButton = [self createButtonWithImageNamed:@"DoneIcon.png" backgroundColor:[UIColor clearColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x00 isToggleable:NO];
-        UIBarButtonItem *windowsBarButton = [self createButtonWithImageNamed:@"WindowsIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x5B isToggleable:YES];
-        UIBarButtonItem *tabBarButton = [self createButtonWithImageNamed:@"TabIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x09 isToggleable:NO];
-        UIBarButtonItem *shiftBarButton = [self createButtonWithImageNamed:@"ShiftIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0xA0 isToggleable:YES];
-        UIBarButtonItem *escapeBarButton = [self createButtonWithImageNamed:@"EscapeIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x1B isToggleable:NO];
-        UIBarButtonItem *controlBarButton = [self createButtonWithImageNamed:@"ControlIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0xA2 isToggleable:YES];
-        UIBarButtonItem *altBarButton = [self createButtonWithImageNamed:@"AltIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0xA4 isToggleable:YES];
-        UIBarButtonItem *deleteBarButton = [self createButtonWithImageNamed:@"DeleteIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x2E isToggleable:NO];
-        UIBarButtonItem *flexibleSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-        
-        [customToolbarView setItems:[NSArray arrayWithObjects:doneBarButton, windowsBarButton, escapeBarButton, tabBarButton, shiftBarButton, controlBarButton, altBarButton, deleteBarButton, flexibleSpace, nil]];
-        keyInputField.inputAccessoryView = customToolbarView;
+        // The key row above the keyboard (Settings picks its keys)
+        __weak StreamView* weakSelf = self;
+        keyBar = [[MNKeyBar alloc] initWithDismiss:^{
+            [weakSelf toggleSoftKeyboardAnchoredAt:0];
+        }];
+        keyInputField.inputAccessoryView = keyBar;
 #endif
         [keyInputField becomeFirstResponder];
         [keyInputField addTarget:self action:@selector(onKeyboardPressed:) forControlEvents:UIControlEventEditingChanged];
@@ -599,63 +643,6 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     return onScreenControls;
 }
 #endif
-
-- (UIBarButtonItem *)createButtonWithImageNamed:(NSString *)imageName backgroundColor:(UIColor *)backgroundColor target:(id)target action:(SEL)action keyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
-    UIImage *image = [UIImage imageNamed:imageName];
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    [button setImage:image forState:UIControlStateNormal];
-    button.frame = CGRectMake(0, 0, 30, 30);
-    button.imageView.contentMode = UIViewContentModeScaleAspectFit;
-    button.imageView.backgroundColor = backgroundColor;
-    button.imageView.layer.cornerRadius = 10.0;
-    button.imageEdgeInsets = UIEdgeInsetsMake(6, 6, 6, 6);
-    [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
-    objc_setAssociatedObject(button, "keyCode", @(keyCode), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(button, "isToggleable", @(isToggleable), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(button, "isOn", @(NO), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    UIBarButtonItem *barButton = [[UIBarButtonItem alloc] initWithCustomView:button];
-    return barButton;
-}
-
-- (void)toolbarButtonClicked:(UIButton *)sender {
-    BOOL isToggleable = [objc_getAssociatedObject(sender, "isToggleable") boolValue];
-    BOOL isOn = [objc_getAssociatedObject(sender, "isOn") boolValue];
-    if (isToggleable){
-        isOn = !isOn;
-        // Update the button's appearance based on its new state
-        if (isOn) {
-            sender.imageView.backgroundColor = [UIColor lightGrayColor];
-        } else {
-            sender.imageView.backgroundColor = [UIColor blackColor];
-        }
-    }
-    // Update the new on/off state of the button
-    objc_setAssociatedObject(sender, "isOn", @(isOn), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    // Get the keyCode parameter and convert to short for key press event
-    short keyCode = [objc_getAssociatedObject(sender, "keyCode") shortValue];
-    // Close keyboard if done button clicked
-    if (!keyCode) {
-        [keyInputField resignFirstResponder];
-        isInputingText = false;
-    }
-    else {
-        // Send key press event using keyCode parameter, toggle if necessary
-        if (isToggleable){
-            if (isOn){
-                LiSendKeyboardEvent(keyCode, KEY_ACTION_DOWN, 0);
-                [keysDown addObject:@(keyCode)];
-            } else {
-                LiSendKeyboardEvent(keyCode, KEY_ACTION_UP, 0);
-                [keysDown removeObject:@(keyCode)];
-            }
-        }
-        else {
-            LiSendKeyboardEvent(keyCode, KEY_ACTION_DOWN, 0);
-            usleep(50 * 1000);
-            LiSendKeyboardEvent(keyCode, KEY_ACTION_UP, 0);
-        }
-    }
-}
 
 - (BOOL)handleMouseButtonEvent:(int)buttonAction forTouches:(NSSet *)touches withEvent:(UIEvent *)event {
 #if !TARGET_OS_TV
@@ -1015,10 +1002,10 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 }
 
 - (void)textFieldDidEndEditing:(UITextField *)textField {
-    for (NSNumber* keyCode in keysDown) {
-        LiSendKeyboardEvent([keyCode shortValue], KEY_ACTION_UP, 0);
-    }
-    [keysDown removeAllObjects];
+#if !TARGET_OS_TV
+    // Latched modifiers on the key bar go up with the keyboard
+    [keyBar releaseKeys];
+#endif
 }
 
 - (void)onKeyboardPressed:(UITextField *)textField {

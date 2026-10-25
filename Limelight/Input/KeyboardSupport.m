@@ -250,6 +250,12 @@
                 keyCode = 0xA5;
                 break;
             case 669: // This value corresponds to the "Globe" or "Language" key on most Apple branded iPad keyboards.
+                // Adapted from VoidLink (GPLv3), Input/KeyboardSupport.m: Settings can leave Globe to
+                // iOS (language switch, emoji) instead (mnGlobeEscape, on unless set)
+                if ([[NSUserDefaults standardUserDefaults] objectForKey:@"mnGlobeEscape"] != nil &&
+                    ![[NSUserDefaults standardUserDefaults] boolForKey:@"mnGlobeEscape"]) {
+                    return false;
+                }
                 keyCode = 0x1B; // This value corresponds to "Escape", which is missing from most Apple branded iPad keyboards.
                 break;
             default:

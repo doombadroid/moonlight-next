@@ -199,7 +199,10 @@ struct SettingsView: View {
         [
             SettingsPage("video", "Video", icon: "tv", VideoSettings(store: store, inStream: inStream)),
             SettingsPage("audio", "Audio", icon: "speaker.wave.2", AudioSettings(store: store)),
-            SettingsPage("input", "Touch and input", icon: "hand.tap", InputSettings(store: store, inStream: inStream)),
+            SettingsPage("input", "Touch and input", icon: "hand.tap", Group {
+                InputSettings(store: store, inStream: inStream)
+                TouchExtrasSettings()
+            }),
             SettingsPage("controller", "Controller", icon: "gamecontroller", ControllerSettingsSection()),
             SettingsPage("gyro", "Gyro", icon: "gyroscope", GyroSettingsSection()),
             SettingsPage("controllerMouse", "Controller mouse", icon: "computermouse", ControllerMouseSettingsSection()),

@@ -121,13 +121,13 @@ import UIKit
     private var dragging = false
     private var lastTap: (time: TimeInterval, point: CGPoint)?
     private var holdTimer: Timer?
-    private let scroller: TwoFingerScroll
+    private let scroller: MNTwoFingerScroll
 
     @objc init(view: UIView, fullScreen: Bool) {
         self.view = view
         self.fullScreen = fullScreen
         // High-res wheel units (120 = one notch) per point of finger travel
-        scroller = TwoFingerScroll(unitsPerPoint: fullScreen ? 10 : 4)
+        scroller = MNTwoFingerScroll(unitsPerPoint: fullScreen ? 10 : 4)
         super.init()
     }
 
@@ -284,7 +284,8 @@ import UIKit
 }
 
 /// Two fingers: scroll (with momentum after a flick) or pinch, whichever the gesture starts as.
-private final class TwoFingerScroll: NSObject {
+/// Also used by the touchscreen mode's two-finger gestures (AbsoluteTouchHandler).
+@objc final class MNTwoFingerScroll: NSObject {
     private enum Mode { case undecided, scroll, zoom }
 
     private let unitsPerPoint: CGFloat
@@ -300,13 +301,13 @@ private final class TwoFingerScroll: NSObject {
 
     private static let ctrl: Int16 = 0xA2
 
-    var engaged: Bool { mode != .undecided }
+    @objc var engaged: Bool { mode != .undecided }
 
-    init(unitsPerPoint: CGFloat) {
+    @objc init(unitsPerPoint: CGFloat) {
         self.unitsPerPoint = unitsPerPoint
     }
 
-    func begin(_ a: CGPoint, _ b: CGPoint) {
+    @objc(begin:and:) func begin(_ a: CGPoint, _ b: CGPoint) {
         stopMomentum()
         cancel()
         startMid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
@@ -319,7 +320,7 @@ private final class TwoFingerScroll: NSObject {
         velocity = .zero
     }
 
-    func update(_ a: CGPoint, _ b: CGPoint) {
+    @objc(update:and:) func update(_ a: CGPoint, _ b: CGPoint) {
         let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
         let spread = hypot(a.x - b.x, a.y - b.y)
         let now = ProcessInfo.processInfo.systemUptime
@@ -358,7 +359,7 @@ private final class TwoFingerScroll: NSObject {
     }
 
     /// Fingers lifted: a flick keeps scrolling and slows down
-    func end() {
+    @objc func end() {
         let flick = mode == .scroll && ProcessInfo.processInfo.systemUptime - lastTime < 0.05 && hypot(velocity.x, velocity.y) > 100
         cancel()
         guard flick, MNTouchPrefs.momentum else { return }
@@ -368,14 +369,14 @@ private final class TwoFingerScroll: NSObject {
     }
 
     /// Ends the gesture without momentum
-    func cancel() {
+    @objc func cancel() {
         if mode == .zoom {
             MNInput.keyUp(Self.ctrl, modifiers: [])
         }
         mode = .undecided
     }
 
-    func stopMomentum() {
+    @objc func stopMomentum() {
         link?.invalidate()
         link = nil
     }
