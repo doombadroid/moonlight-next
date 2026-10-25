@@ -43,6 +43,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL) hevcSupported;
 + (BOOL) av1Supported;
 + (BOOL) hdrSupported;
+// HEVC 4:4:4 decode (the stream still needs a host GPU that encodes it)
++ (BOOL) yuv444Supported;
 
 @end
 

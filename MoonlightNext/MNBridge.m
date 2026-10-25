@@ -15,6 +15,8 @@
 #import "StreamConfiguration.h"
 #import "StreamFrameViewController.h"
 #import "ControllerSupport.h"
+#import "OnScreenControls.h"
+#import "Moonlight-Swift.h"
 
 #include <Limelight.h>
 
@@ -49,6 +51,20 @@
         CGFloat scale = window.screen.scale;
         CGFloat w = MAX(window.bounds.size.width, window.bounds.size.height) * scale;
         CGFloat h = MIN(window.bounds.size.width, window.bounds.size.height) * scale;
+        CGSize external = MNExternalDisplay.shared.targetPixelSize;
+        if (external.width > 0 && external.height > 0) {
+            // The video will play on the external screen: match that instead
+            w = MAX(external.width, external.height);
+            h = MIN(external.width, external.height);
+        }
+        else if ([[NSUserDefaults standardUserDefaults] boolForKey:@"mnResolutionSafeArea"]) {
+            // "Safe area": narrow the stream so the centered video clears the camera cut-out
+            // and rounded corners on both sides (the cut-out sits on the long edge's ends)
+            UIEdgeInsets insets = [OnScreenControls obstructedInsetsForView:window];
+            BOOL landscape = window.bounds.size.width >= window.bounds.size.height;
+            CGFloat side = landscape ? MAX(insets.left, insets.right) : MAX(insets.top, insets.bottom);
+            w -= 2 * side * scale;
+        }
         // Encoders want even dimensions
         config.width = ((int)w) & ~1;
         config.height = ((int)h) & ~1;
@@ -59,6 +75,7 @@
     config.optimizeGameSettings = streamSettings.optimizeGames;
     config.playAudioOnPC = streamSettings.playAudioOnPC;
     config.useFramePacing = streamSettings.useFramePacing;
+    config.fullColorRange = [[NSUserDefaults standardUserDefaults] boolForKey:@"mnFullColorRange"];
     config.swapABXYButtons = streamSettings.swapABXYButtons;
 
     // multiController must be set before calling getConnectedGamepadMask
@@ -67,6 +84,11 @@
 
     // Probe for supported channel configurations
     int physicalOutputChannels = (int)[AVAudioSession sharedInstance].maximumOutputNumberOfChannels;
+    if (@available(iOS 18.0, *)) {
+        // iOS 18 downmixes surround to the current output, or renders it as spatial audio,
+        // so the picker's choice goes through. Adapted from VoidLink (GPLv3), MainFrameViewController.m.
+        physicalOutputChannels = 8;
+    }
     int numberOfChannels = MIN([streamSettings.audioConfig intValue], physicalOutputChannels);
     if (numberOfChannels >= 8) {
         config.audioConfiguration = AUDIO_CONFIGURATION_71_SURROUND;
@@ -106,6 +128,16 @@
         // HEVC Main10 is supported if the user wants it and the display supports it
         if (streamSettings.enableHdr && (AVPlayer.availableHDRModes & AVPlayerHDRModeHDR10) != 0) {
             config.supportedVideoFormats |= VIDEO_FORMAT_H265_MAIN10;
+        }
+    }
+
+    // YUV 4:4:4 (Settings › Video): offered alongside 4:2:0, so common-c only picks it when the
+    // host encoder supports it. HEVC only: the dependable hardware path on Apple decoders.
+    if ([self yuv444Supported] && [[NSUserDefaults standardUserDefaults] boolForKey:@"mnYUV444"] &&
+        (config.supportedVideoFormats & VIDEO_FORMAT_H265)) {
+        config.supportedVideoFormats |= VIDEO_FORMAT_H265_REXT8_444;
+        if (config.supportedVideoFormats & VIDEO_FORMAT_H265_MAIN10) {
+            config.supportedVideoFormats |= VIDEO_FORMAT_H265_REXT10_444;
         }
     }
 
@@ -193,6 +225,10 @@
 
 + (BOOL) av1Supported {
     return VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1);
+}
+
++ (BOOL) yuv444Supported {
+    return [self hevcSupported];
 }
 
 + (BOOL) hdrSupported {
