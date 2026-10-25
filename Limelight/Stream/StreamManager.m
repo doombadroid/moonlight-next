@@ -25,6 +25,7 @@
     UIView* _renderView;
     id<ConnectionCallbacks> _callbacks;
     Connection* _connection;
+    VideoDecoderRenderer* _renderer;
     NSMutableArray<NSNumber*>* _lateHistory;   // worst delay spike per second, ms
     NSMutableArray<NSNumber*>* _stutterHistory; // network hitches per second
     NSMutableArray<NSNumber*>* _hostGapHistory; // PC frame gaps per second
@@ -105,6 +106,7 @@
     // Initializing the renderer must be done on the main thread
     dispatch_async(dispatch_get_main_queue(), ^{
         VideoDecoderRenderer* renderer = [[VideoDecoderRenderer alloc] initWithView:self->_renderView callbacks:self->_callbacks streamAspectRatio:(float)self->_config.width / (float)self->_config.height useFramePacing:self->_config.useFramePacing];
+        self->_renderer = renderer;
         self->_connection = [[Connection alloc] initWithConfig:self->_config renderer:renderer connectionCallbacks:self->_callbacks];
         NSOperationQueue* opQueue = [[NSOperationQueue alloc] init];
         [opQueue addOperation:self->_connection];
@@ -170,12 +172,15 @@
     float fps = stats.totalFrames / interval;
     double mbps = stats.receivedBytes * 8 / interval / 1e6;
     double dropPercent = stats.totalFrames > 0 ? 100.0 * stats.networkDroppedFrames / stats.totalFrames : 0;
+    double decodeAvg = 0, decodeMax = 0;
+    BOOL haveDecode = [_renderer getDecodeTime:&decodeAvg max:&decodeMax];
 
     // Settings › Stream › Stats: Simple is one line (absent key = Detailed, as before levels)
     NSNumber* detailed = [[NSUserDefaults standardUserDefaults] objectForKey:@"mnStatsDetailed"];
     if (detailed != nil && !detailed.boolValue) {
         NSString* latency = haveRtt ? [NSString stringWithFormat:@"%u ms", rtt] : @"– ms";
-        return [NSString stringWithFormat:@"%.0f fps · %.1f Mb/s · %@ · %.1f%% lost", fps, mbps, latency, dropPercent];
+        NSString* decode = haveDecode ? [NSString stringWithFormat:@" · %.1f ms decode", decodeAvg] : @"";
+        return [NSString stringWithFormat:@"%.0f fps · %.1f Mb/s · %@ · %.1f%% lost%@", fps, mbps, latency, dropPercent, decode];
     }
 
     NSString* latencyString = haveRtt ? [NSString stringWithFormat:@"%u ms (variance: %u ms)", rtt, variance] : @"N/A";
@@ -195,7 +200,7 @@
     double peakMbps = [[_bitrateHistory valueForKeyPath:@"@max.self"] doubleValue];
     return [NSString stringWithFormat:@"Video stream: %dx%d %.2f FPS (Codec: %@, %@ range)\n"
             "Bitrate: %.1f Mb/s, average %.1f, peak %.1f (last %lus)\n"
-            "Renderer: AVSampleBufferDisplayLayer, %@ · %d frame(s) buffered\n"
+            "Renderer: %@%@\n"
             "Frames dropped by your network connection: %.2f%%\nAverage network latency: %@%@%@",
             _config.width,
             _config.height,
@@ -203,8 +208,8 @@
             [_connection getActiveCodecName],
             _config.fullColorRange ? @"full" : @"limited",
             mbps, avgMbps, peakMbps, (unsigned long)_bitrateHistory.count,
-            _config.useFramePacing ? @"smoothest pacing" : @"lowest latency",
-            LiGetPendingVideoFrames(),
+            [_renderer statsDescription],
+            haveDecode ? [NSString stringWithFormat:@"\nDecode time: average %.1f ms, max %.1f ms", decodeAvg, decodeMax] : @"",
             dropPercent,
             latencyString,
             hostProcessingString,
