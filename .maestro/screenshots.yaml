@@ -8,7 +8,7 @@ appId: com.doombadroid.moonlume
     arguments:
       MNDemoMode: "YES"
       # Settings opens with the Gyro header at the top (demo mode only)
-      MNDemoSettingsAnchor: gyro
+      MNDemoSettingsAnchor: gyro-header
 # A cold launch can take a while on the CI simulator.
 - extendedWaitUntil:
     visible: "Gaming PC"

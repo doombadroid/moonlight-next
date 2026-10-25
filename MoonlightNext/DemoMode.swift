@@ -31,7 +31,8 @@ import UIKit
         #endif
     }()
 
-    /// `-MNDemoSettingsAnchor gyro`: Settings opens scrolled to that section (its id)
+    /// `-MNDemoSettingsAnchor gyro-header`: Settings opens scrolled to that section's header
+    /// (`<id>-header`), or to its first row (`<id>`)
     static var settingsAnchor: String? { isOn ? arguments["MNDemoSettingsAnchor"] as? String : nil }
 
     /// The demo PC: paired and online, with Duskline Rally (a made-up game) running.

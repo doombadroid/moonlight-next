@@ -91,7 +91,7 @@ struct SettingsSection<Content: View, Footer: View>: View {
             Section {
                 if isOpen { content }
             } header: {
-                header
+                header.id("\(id)-header")
             } footer: {
                 if isOpen { footer }
             }
