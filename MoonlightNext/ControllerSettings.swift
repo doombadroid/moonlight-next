@@ -15,6 +15,7 @@ import SwiftUI
 
     static let emulatedKey = "mnEmulatedController"
     static let motionKey = "mnMotionSource"
+    static let stickMinimumKey = "mnStickMinimum"
 
     static var emulated: Emulated { Emulated(rawValue: UserDefaults.standard.integer(forKey: emulatedKey)) ?? .automatic }
     static var motion: Motion { Motion(rawValue: UserDefaults.standard.integer(forKey: motionKey)) ?? .automatic }
@@ -22,6 +23,9 @@ import SwiftUI
     // LI_CTYPE_XBOX, LI_CTYPE_PS
     private static let typeXbox: UInt8 = 0x01
     private static let typePlayStation: UInt8 = 0x02
+
+    /// Physical sticks' anti-deadzone, 0...0.4 of full travel
+    @objc static var stickMinimum: Double { UserDefaults.standard.double(forKey: stickMinimumKey) }
 
     /// Motion › Off: no motion reaches the host, from the phone or a controller.
     @objc static var motionOff: Bool { motion == .off }
@@ -55,6 +59,7 @@ struct ControllerSettingsSections: View {
     @AppStorage(MNRumble.phoneFallbackKey) private var phoneRumble = true
     @AppStorage(MNRumble.swapKey) private var swapMotors = false
     @AppStorage(MNAdaptiveTriggers.enabledKey) private var adaptiveTriggers = true
+    @AppStorage(MNControllerPrefs.stickMinimumKey) private var stickMinimum = 0.0
 
     @AppStorage(GyroSettings.modeKey) private var gyroMode = GyroSettings.Mode.off.rawValue
     @AppStorage(GyroSettings.sourceKey) private var gyroSource = GyroSettings.Source.phone.rawValue
@@ -105,10 +110,11 @@ struct ControllerSettingsSections: View {
             }
             Toggle("Swap rumble motors", isOn: $swapMotors)
             Toggle("DualSense adaptive triggers", isOn: $adaptiveTriggers)
+            slider("Stick minimum offset", value: $stickMinimum, in: 0...0.4, step: 0.05, format: "%.0f%%", scale: 100)
         } header: {
             Theme.label("Controller")
         } footer: {
-            Text("PlayStation makes the host create a DualShock or DualSense, so games and Steam Input can use the phone's motion sensors as the pad's gyro (Auto uses a connected controller's own gyro when it has one). It needs a Windows or Linux host: Sunshine on macOS has no virtual controller. Adaptive triggers reach a real DualSense only when the host emulates one, in practice Sunshine on Linux. Controller type and motion apply the next time you connect.")
+            Text("PlayStation makes the host create a DualShock or DualSense, so games and Steam Input can use the phone's motion sensors as the pad's gyro (Auto uses a connected controller's own gyro when it has one). It needs a Windows or Linux host: Sunshine on macOS has no virtual controller. Stick minimum offset lifts a controller's small stick movements past a game's deadzone. Adaptive triggers reach a real DualSense only when the host emulates one, in practice Sunshine on Linux. Controller type and motion apply the next time you connect.")
         }
 
         Section {

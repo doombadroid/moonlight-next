@@ -113,6 +113,7 @@ enum GyroSettings {
     private var remainder = (x: 0.0, y: 0.0)
     private var stickActive = false
     private var steerActive = false
+    private var lastSteer: Int16 = 0
     /// Gyro button: last state, and the toggle's current state
     private var buttonWasDown = false
     private var toggledOn = true
@@ -375,7 +376,12 @@ enum GyroSettings {
             let angle = atan2(alongRight, alongDown)
             x = MNGyro.shapeStick(x: angle / fullLockRadians * GyroSettings.steeringSensitivity, y: 0, minimum: GyroSettings.minStick, deadZone: 0.03).x
         }
-        MNInput.gamepadSteerX(Int16(x * 32767))
+        let value = Int16(x * 32767)
+        // Holding a steady angle shouldn't resend the same stick 120 times a second
+        if value != lastSteer || !steerActive {
+            MNInput.gamepadSteerX(value)
+            lastSteer = value
+        }
         steerActive = true
     }
 

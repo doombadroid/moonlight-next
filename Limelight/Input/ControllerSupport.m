@@ -57,6 +57,20 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
 
 #define MAX_MAGNITUDE(x, y) (abs(x) > abs(y) ? (x) : (y))
 
+#if !TARGET_OS_TV
+// Scale a stick radially so any deflection starts at `minimum` of full travel (0...1)
+static void LiftStick(short* x, short* y, double minimum)
+{
+    double length = hypot(*x, *y) / 0x7FFE;
+    if (length <= 0) {
+        return;
+    }
+    double lifted = minimum + (1 - minimum) * MIN(length, 1);
+    *x = (short)(*x / length * lifted);
+    *y = (short)(*y / length * lifted);
+}
+#endif
+
 -(void) rumble:(unsigned short)controllerNumber lowFreqMotor:(unsigned short)lowFreqMotor highFreqMotor:(unsigned short)highFreqMotor
 {
     Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
@@ -912,6 +926,15 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
                 
                 leftTrigger = gamepad.leftTrigger.value * 0xFF;
                 rightTrigger = gamepad.rightTrigger.value * 0xFF;
+                
+#if !TARGET_OS_TV
+                // Anti-deadzone: lift small deflections past the game's stick deadzone
+                double minimum = MNControllerPrefs.stickMinimum;
+                if (minimum > 0) {
+                    LiftStick(&leftStickX, &leftStickY, minimum);
+                    LiftStick(&rightStickX, &rightStickY, minimum);
+                }
+#endif
                 
                 [self updateLeftStick:limeController x:leftStickX y:leftStickY];
                 [self updateRightStick:limeController x:rightStickX y:rightStickY];
