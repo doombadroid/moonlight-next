@@ -41,7 +41,8 @@ struct LauncherView: View {
     var body: some View {
         optionsDialogs(content)
             .sheet(isPresented: $nav.showWizard) { ControllerWizard() }
-            .onAppear { MNControllerNav.shared.start() }
+            // Demo mode: no controller navigation (the CI simulator has a virtual controller)
+            .onAppear { if !MNDemo.isOn { MNControllerNav.shared.start() } }
     }
 
     private var content: some View {

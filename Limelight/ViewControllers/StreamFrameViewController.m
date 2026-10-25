@@ -103,6 +103,8 @@
         _tipLabel.hidden = YES;
         [_spinner stopAnimating];
         [_streamView showOnScreenControls];
+        // The full gamepad even if the simulator reports a (virtual) controller
+        [[_streamView layoutControls] setLevel:OnScreenControlsLevelFull];
     }
 #endif
 }
