@@ -25,6 +25,27 @@ Requires iOS 17 or later. The iPhone Duo features need iOS 27.1.
 - **Folded gamepad.** On the outer display the on-screen controls are packed to the edges and keep clear of the camera hole.
 - **Layouts per posture.** Control layouts are saved separately for the folded, phone-landscape and unfolded postures, and optionally per game.
 
+## Screenshots
+
+iPhone Duo, folded and unfolded:
+
+<p>
+<img src="docs/screenshots/duo-launcher-folded.webp" alt="MoonLume's launcher on the folded iPhone Duo, showing a PC and its games" height="360">
+<img src="docs/screenshots/duo-race-folded.webp" alt="SuperTuxKart streaming on the folded iPhone Duo with the on-screen gamepad" height="360">
+</p>
+<p>
+<img src="docs/screenshots/duo-race-unfolded.webp" alt="SuperTuxKart streaming full screen on the unfolded iPhone Duo" width="49%">
+</p>
+
+Half-folded (tabletop), with the keyboard and trackpad deck or the gamepad deck on the lower half:
+
+<p>
+<img src="docs/screenshots/duo-tabletop-keyboard.webp" alt="The half-folded iPhone Duo streaming SuperTuxKart above the keyboard and trackpad deck" width="49%">
+<img src="docs/screenshots/duo-tabletop-gamepad.webp" alt="The half-folded iPhone Duo streaming SuperTuxKart above the gamepad deck" width="49%">
+</p>
+
+<sub>Device frames are from Apple Design Resources. The game shown is [SuperTuxKart](https://supertuxkart.net) (GPL-3.0, art CC-BY-SA), streamed from a Linux PC running Sunshine.</sub>
+
 ## Features
 
 ### Launcher
