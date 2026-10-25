@@ -115,8 +115,8 @@ appId: com.doombadroid.moonlume
     element: "GYRO"
     direction: DOWN
     centerElement: true
-    speed: 80
-    timeout: 90000
+    speed: 40
+    timeout: 150000
 - waitForAnimationToEnd:
     timeout: 2000
 - takeScreenshot: 06-settings-gyro
