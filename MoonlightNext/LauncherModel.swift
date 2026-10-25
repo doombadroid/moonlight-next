@@ -35,6 +35,8 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
     @Published var alert: LauncherAlert?
     @Published var pairingPIN: String?
     @Published var runningAppChoice: RunningAppChoice?
+    /// Host whose details sheet is open (addresses, MAC, pairing).
+    @Published var hostDetails: TemporaryHost?
     @Published private(set) var boxArtVersion = 0
 
     /// The window streams are presented from; set by SceneDelegate.
@@ -52,6 +54,11 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
 
     private let boxArtCache = NSCache<NSString, UIImage>()
     private var boxArtLoading = Set<String>()
+    /// Art that turned out to be the host's blank placeholder; never decoded again.
+    private var placeholderArt = Set<String>()
+
+    /// Last app streamed from each host (host UUID → app ID), for the one-tap Launch.
+    private static let lastAppKey = "mnLastAppByHost"
 
     // MARK: - Lifecycle
 
@@ -59,6 +66,7 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
         guard !started else { return }
         started = true
 
+        SettingsStore.applyDeviceDefaultsIfNeeded()
         CryptoManager.generateKeyPairUsingSSL()
         _ = IdManager.getUniqueId()
         clientCert = CryptoManager.readCertFromFile()
@@ -424,6 +432,26 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
         host.appList.compactMap { $0 as? TemporaryApp }.first { $0.id == host.currentGame }
     }
 
+    func lastApp(on host: TemporaryHost) -> TemporaryApp? {
+        let id = (UserDefaults.standard.dictionary(forKey: Self.lastAppKey) as? [String: String])?[host.uuid]
+        return host.appList.compactMap { $0 as? TemporaryApp }.first { $0.id == id }
+    }
+
+    /// The app the host card's Launch button starts: the running app, else the last one played.
+    func quickLaunchApp(on host: TemporaryHost) -> TemporaryApp? {
+        guard host.state == .online, host.pairState == .paired else { return nil }
+        return runningApp(on: host) ?? lastApp(on: host)
+    }
+
+    /// One-tap Launch: resume or start that app, or open the host's apps when there is none.
+    func quickLaunch(_ host: TemporaryHost) {
+        if let app = quickLaunchApp(on: host) {
+            stream(app)
+        } else if host !== selectedHost {
+            select(host, userInitiated: true)
+        }
+    }
+
     func toggleHidden(_ app: TemporaryApp) {
         guard let host = app.host else { return }
         app.hidden.toggle()
@@ -469,6 +497,10 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
         guard let window, let root = window.rootViewController, let host = app.host else { return }
         appManager.stopRetrieving()
 
+        var lastApps = (UserDefaults.standard.dictionary(forKey: Self.lastAppKey) as? [String: String]) ?? [:]
+        lastApps[host.uuid] = app.id
+        UserDefaults.standard.set(lastApps, forKey: Self.lastAppKey)
+
         let config = MNBridge.streamConfig(for: app, window: window)
         let streamVC = MNBridge.streamController(withConfig: config) { [weak self, weak root] quitApp in
             root?.dismiss(animated: true) {
@@ -497,12 +529,23 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
     @objc(receivedAssetForApp:)
     func receivedAsset(for app: TemporaryApp!) {
         guard let app else { return }
-        boxArtCache.removeObject(forKey: boxArtKey(app))
-        DispatchQueue.main.async { self.loadBoxArt(app) }
+        let key = boxArtKey(app)
+        DispatchQueue.main.async {
+            self.boxArtCache.removeObject(forKey: key)
+            self.placeholderArt.remove(key as String)
+            self.loadBoxArt(app)
+        }
     }
 
     func boxArt(for app: TemporaryApp) -> UIImage? {
         boxArtCache.object(forKey: boxArtKey(app))
+    }
+
+    /// GameStream hosts send a blank image for apps without art: 130×180 from GFE 2,
+    /// 628×888 from GFE 3 and Sunshine's default box.png. Those get MoonLume's own tile.
+    private static func isPlaceholderArt(_ image: UIImage) -> Bool {
+        let size = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        return size == CGSize(width: 130, height: 180) || size == CGSize(width: 628, height: 888)
     }
 
     private func boxArtKey(_ app: TemporaryApp) -> NSString {
@@ -512,12 +555,16 @@ final class LauncherModel: NSObject, ObservableObject, DiscoveryCallback, PairCa
     /// Decodes box art off the main thread so scrolling stays smooth.
     private func loadBoxArt(_ app: TemporaryApp) {
         let key = boxArtKey(app)
-        guard boxArtCache.object(forKey: key) == nil, !boxArtLoading.contains(key as String) else { return }
+        guard boxArtCache.object(forKey: key) == nil, !boxArtLoading.contains(key as String),
+              !placeholderArt.contains(key as String) else { return }
         boxArtLoading.insert(key as String)
         DispatchQueue.global(qos: .utility).async {
-            let image = UIImage(contentsOfFile: AppAssetManager.boxArtPath(for: app))?.preparingForDisplay()
+            let file = UIImage(contentsOfFile: AppAssetManager.boxArtPath(for: app))
+            let blank = file.map(Self.isPlaceholderArt) ?? false
+            let image = blank ? nil : file?.preparingForDisplay()
             DispatchQueue.main.async {
                 self.boxArtLoading.remove(key as String)
+                if blank { self.placeholderArt.insert(key as String) }
                 if let image {
                     self.boxArtCache.setObject(image, forKey: key)
                     self.boxArtVersion += 1
