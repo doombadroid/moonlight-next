@@ -23,19 +23,6 @@ appId: com.doombadroid.moonlume
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: 01-launcher
-- tapOn: "More for Gaming PC"
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: dbg-launcher-menu
-- tapOn: "Computer Details"
-- waitForAnimationToEnd:
-    timeout: 2000
-- takeScreenshot: dbg-details
-- tapOn:
-    text: "Done|Close"
-    optional: true
-- waitForAnimationToEnd:
-    timeout: 2000
 
 # The stream is landscape-only. The device is turned too: with the device left in portrait,
 # XCTest drops every element right of the portrait width and taps land in portrait points.
@@ -49,7 +36,6 @@ appId: com.doombadroid.moonlume
 - takeScreenshot: 02-stream-land
 
 - tapOn: "Stream menu"
-- takeScreenshot: dbg-menu-immediate-land
 - waitForAnimationToEnd:
     timeout: 3000
 # First keyboard use in a fresh simulator shows the swipe-typing intro (the workflow

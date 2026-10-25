@@ -234,7 +234,9 @@ private final class TouchWatcher: UIGestureRecognizer {
     var window: UIWindow? { LauncherModel.current?.window }
 
     func start() {
-        guard !started else { return }
+        // Demo mode: no controller navigation or first-connection sheet (the CI simulator
+        // reports a virtual controller)
+        guard !started, !MNDemo.isOn else { return }
         started = true
         #if DEBUG
         Self.selfCheck()
