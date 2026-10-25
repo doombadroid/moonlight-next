@@ -67,7 +67,7 @@ jobs:
           # The newest runtime's newest "iPhone N Pro" (not Pro Max) whose screen is 1206x2622,
           # read from each device type's profile.plist. A runtime only runs the device types it
           # lists in supportedDeviceTypes ("Incompatible device" otherwise).
-          read -r type runtime < <(python3 - <<'PY'
+          cat > "$RUNNER_TEMP/pick.py" <<'PY'
           import json, plistlib, re, subprocess, sys
           j = lambda *a: json.loads(subprocess.check_output(["xcrun", "simctl", "list", *a, "-j"]))
           types = {d["identifier"]: d for d in j("devicetypes")["devicetypes"]}
@@ -98,7 +98,7 @@ jobs:
                   or pick(lambda d: screen(d["identifier"]) == (1206, 2622))
                   or pick(lambda d: num(d["name"]) > 0)))
           PY
-          )
+          read -r type runtime < <(python3 "$RUNNER_TEMP/pick.py")
           echo "::notice::device type $type, runtime $runtime"
           udid=$(xcrun simctl create shots "$type" "$runtime")
           xcrun simctl boot "$udid"
