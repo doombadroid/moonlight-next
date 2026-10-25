@@ -166,6 +166,7 @@ struct SettingsView: View {
     /// Read by the input deck and the on-screen controls on every press.
     @AppStorage("mnHapticsEnabled") private var hapticsEnabled = true
     @AppStorage("mnTrackpadSpeed") private var trackpadSpeed = 2.0
+    @AppStorage("mnPhoneRumble") private var phoneRumble = true
     @AppStorage(GyroSettings.modeKey) private var gyroMode = GyroSettings.Mode.off.rawValue
     @AppStorage(GyroSettings.activationKey) private var gyroActivation = GyroSettings.Activation.always.rawValue
     @AppStorage(GyroSettings.sensitivityKey) private var gyroSensitivity = 1.5
@@ -243,6 +244,7 @@ struct SettingsView: View {
                     Toggle("Swap A/B and X/Y", isOn: $store.swapABXYButtons)
                     Toggle("Citrix X1 mouse", isOn: $store.btMouseSupport)
                     Toggle("Haptics on button presses", isOn: $hapticsEnabled)
+                    Toggle("Phone rumble without a controller", isOn: $phoneRumble)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Trackpad speed")

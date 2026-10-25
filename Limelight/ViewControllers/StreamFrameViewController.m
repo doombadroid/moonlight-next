@@ -554,6 +554,7 @@ static os_log_t DuoLog(void) {
     _tornDown = YES;
 #if !TARGET_OS_TV
     [MNGyro.shared stop];
+    [MNPhoneRumble.shared stop];
     [MNInput setControllerSupport:nil];
 #endif
 

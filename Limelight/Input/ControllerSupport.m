@@ -7,6 +7,9 @@
 //
 
 #import "ControllerSupport.h"
+#if !TARGET_OS_TV
+#import "Moonlight-Swift.h"
+#endif
 #import "Controller.h"
 
 #import "OnScreenControls.h"
@@ -57,9 +60,14 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
 -(void) rumble:(unsigned short)controllerNumber lowFreqMotor:(unsigned short)lowFreqMotor highFreqMotor:(unsigned short)highFreqMotor
 {
     Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
-    if (controller == nil && controllerNumber == 0 && _oscEnabled) {
-        // TODO: Rumble emulation for OSC
+#if !TARGET_OS_TV
+    if (controller == nil && controllerNumber == 0) {
+        // No physical pad for player 1: the phone is the controller (on-screen controls or the
+        // input deck), so it rumbles itself
+        [MNPhoneRumble.shared setLow:lowFreqMotor high:highFreqMotor];
+        return;
     }
+#endif
     if (controller == nil) {
         // No connected controller for this player
         return;
