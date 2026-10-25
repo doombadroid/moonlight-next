@@ -48,7 +48,7 @@ typedef NS_ENUM(NSInteger, OnScreenControlsLevel) {
 - (void) setEditing:(BOOL)editing;
 - (BOOL) isEditing;
 - (void) resetLayout NS_SWIFT_NAME(resetLayout());
-- (void) saveLayoutForThisGame:(BOOL)thisGame;
+- (void) saveLayoutForThisGame:(BOOL)thisGame NS_SWIFT_NAME(saveLayout(forThisGame:));
 - (BOOL) hasLayoutForThisGame;
 
 // Called on every change the editor UI should show: selection, layout, undo stack

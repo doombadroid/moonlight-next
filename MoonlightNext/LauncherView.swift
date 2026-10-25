@@ -21,6 +21,8 @@ struct LauncherView: View {
     @SwiftUI.State private var showSettings = false
     @SwiftUI.State private var showAddHost = false
     @SwiftUI.State private var newHostAddress = ""
+    /// The second page of a computer's controller options (X, then Y: More)
+    @SwiftUI.State private var hostMore: TemporaryHost?
 
     /// The sidebar selection is the model's selected computer.
     private var hostSelection: Binding<String?> {
@@ -112,6 +114,7 @@ struct LauncherView: View {
         .navDialog(model.runningAppChoice.map(runningAppDialog))
         .navDialog(nav.optionsApp.map(appOptionsDialog))
         .navDialog(nav.optionsHost.map(hostOptionsDialog))
+        .navDialog(hostMore.map(hostMoreDialog))
         .confirmationDialog(nav.optionsApp?.displayName ?? "",
                             isPresented: Binding(get: { nav.optionsApp != nil }, set: { if !$0 { nav.optionsApp = nil } }),
                             titleVisibility: .visible,
@@ -126,9 +129,18 @@ struct LauncherView: View {
                             titleVisibility: .visible,
                             presenting: nav.optionsHost) { host in
             ForEach(hostOptionsDialog(host).filter { $0.button != .b }, id: \.title) { action in
-                Button(action.title, role: action.button == .y ? .destructive : nil, action: action.perform)
+                Button(action.title, action: action.perform)
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(hostMore?.name ?? "",
+                            isPresented: Binding(get: { hostMore != nil }, set: { if !$0 { hostMore = nil } }),
+                            titleVisibility: .visible,
+                            presenting: hostMore) { host in
+            ForEach(hostMoreDialog(host).filter { $0.button != .b }, id: \.title) { action in
+                Button(action.title, role: action.button == .y ? .destructive : nil, action: action.perform)
+            }
+            Button("Back", role: .cancel) {}
         }
         .sheet(isPresented: $nav.showWizard) { ControllerWizard() }
         .onAppear { MNControllerNav.shared.start() }
@@ -201,15 +213,35 @@ struct LauncherView: View {
         }
         return [
             main,
-            NavDialogAction(button: .x, title: "Test Network") {
+            NavDialogAction(button: .x, title: "Computer Details") {
                 nav.optionsHost = nil
+                // A sheet can't come up while the dialog is still going away
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { model.hostDetails = host }
+            },
+            NavDialogAction(button: .y, title: "More…") {
+                nav.optionsHost = nil
+                // One dialog at a time: the second page comes up once the first has gone
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { hostMore = host }
+            },
+            NavDialogAction(button: .b, title: "Cancel") { nav.optionsHost = nil },
+        ]
+    }
+
+    /// Second page: the rarer and destructive actions
+    private func hostMoreDialog(_ host: TemporaryHost) -> [NavDialogAction] {
+        [
+            NavDialogAction(button: .x, title: "Test Network") {
+                hostMore = nil
                 model.testNetwork()
             },
             NavDialogAction(button: .y, title: "Remove Computer") {
-                nav.optionsHost = nil
+                hostMore = nil
                 model.remove(host)
             },
-            NavDialogAction(button: .b, title: "Cancel") { nav.optionsHost = nil },
+            NavDialogAction(button: .b, title: "Back") {
+                hostMore = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { nav.optionsHost = host }
+            },
         ]
     }
 }

@@ -1337,6 +1337,25 @@ static id MNEntryFromStyle(MNControlStyle s) {
         MNSnapAxis(p.x, CGRectGetMinX(b) + CGRectGetMaxX(b) - *MN_GROUP_X[i], &bestX, guideX);
         MNSnapAxis(p.y, *MN_GROUP_Y[i], &bestY, guideY);
     }
+    // And to the on-screen widgets, whose centres are saved as fractions of this view
+    // (MoonlightNext/Widgets/WidgetModel.swift); the widgets snap to the controls the same way
+    id widgets = [self layout][@"widgets"];
+    if ([widgets isKindOfClass:NSArray.class]) {
+        for (id widget in (NSArray*)widgets) {
+            if (![widget isKindOfClass:NSDictionary.class]) {
+                continue;
+            }
+            id x = widget[@"x"], y = widget[@"y"];
+            if (![x isKindOfClass:NSNumber.class] || ![y isKindOfClass:NSNumber.class]) {
+                continue;
+            }
+            CGFloat wx = CGRectGetMinX(b) + [x doubleValue] * CGRectGetWidth(b);
+            CGFloat wy = CGRectGetMinY(b) + [y doubleValue] * CGRectGetHeight(b);
+            MNSnapAxis(p.x, wx, &bestX, guideX);
+            MNSnapAxis(p.x, CGRectGetMinX(b) + CGRectGetMaxX(b) - wx, &bestX, guideX);
+            MNSnapAxis(p.y, wy, &bestY, guideY);
+        }
+    }
     return CGPointMake(isnan(*guideX) ? p.x : *guideX, isnan(*guideY) ? p.y : *guideY);
 }
 

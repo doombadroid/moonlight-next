@@ -716,6 +716,11 @@ static void LiftStick(short* x, short* y, double minimum)
         if (limeController.usesPhoneMotion) {
             capabilities |= LI_CCAP_GYRO | LI_CCAP_ACCEL;
         }
+        if (type == LI_CTYPE_PS) {
+            // On-screen PlayStation touchpad widgets send their touches as this pad's
+            capabilities |= LI_CCAP_TOUCHPAD;
+            supportedButtonFlags |= TOUCHPAD_FLAG;
+        }
     }
     if (controller != nil && [MNVendorRumble.shared handles:controller]) {
         capabilities |= LI_CCAP_RUMBLE;

@@ -66,6 +66,18 @@ import UIKit
         // Mouse pads and scroll strips
         var touchpad: MNTouchpad?
         var scrollRemainder: CGFloat = 0
+        // PlayStation touchpads: the pointer id of each finger
+        var pointers: [ObjectIdentifier: UInt32] = [:]
+        // Screen pads: a press held after a still moment drags
+        var holdTimer: Timer?
+        var mouseHeld = false
+        // Moved more than a wobble since landing; when it landed
+        var moved = false
+        var downTime = 0.0
+        // Being moved during play (Movable during play)
+        var moving = false
+        // Peek folders: the widget in it the finger is over
+        var peekTarget: String?
     }
 
     // MARK: Editing state
@@ -77,6 +89,10 @@ import UIKit
     private var dragStart = CGPoint.zero
     private var dragStartFrame = CGRect.zero
     private var dragStartCenters: [String: CGPoint] = [:]
+    /// The widget being moved during play (one at a time)
+    private var playMoveID: String?
+    /// Where the last function button sits, for the Layouts sheet's popover
+    private var lastFunctionRect = CGRect.zero
     private var writing = false
     private let selectionLayer = CAShapeLayer()
     private let handleLayer = CAShapeLayer()
@@ -156,7 +172,7 @@ import UIKit
         for widget in list {
             var shown = widget
             if widget.kind == .folder {
-                if folderCollapsed[widget.id] == nil { folderCollapsed[widget.id] = widget.collapsed }
+                if folderCollapsed[widget.id] == nil { folderCollapsed[widget.id] = widget.collapsed || widget.peek }
                 shown.collapsed = folderCollapsed[widget.id] ?? widget.collapsed
             }
             if let view = views[widget.id] {
@@ -308,9 +324,21 @@ import UIKit
     }
 
     private func isHiddenByFolder(_ w: MNWidget) -> Bool {
-        guard !w.folder.isEmpty, widget(w.folder)?.kind == .folder else { return false }
-        return folderCollapsed[w.folder] ?? false
+        parents(of: w).contains { folderCollapsed[$0] ?? false }
     }
+
+    /// The folders a widget is in, innermost first: folders nest one level, so at most two
+    func parents(of w: MNWidget) -> [String] {
+        var chain: [String] = []
+        var id = w.folder
+        while !id.isEmpty, chain.count < 2, id != w.id, !chain.contains(id), let f = widget(id), f.kind == .folder {
+            chain.append(id)
+            id = f.folder
+        }
+        return chain
+    }
+
+    private func isInside(_ w: MNWidget, _ folder: String) -> Bool { parents(of: w).contains(folder) }
 
     /// The topmost widget under a point that takes touches now
     private func widgetAt(_ p: CGPoint) -> MNWidget? {
@@ -353,6 +381,10 @@ import UIKit
                 touchpad(w).touchesBegan([touch])
                 continue
             }
+            if w.kind == .controllerTouchpad {
+                controllerTouch(w, touch, .began)
+                continue
+            }
             touchBegan(w, at: p)
         }
     }
@@ -368,7 +400,14 @@ import UIKit
                 live[id]?.touchpad?.touchesMoved([touch])
                 continue
             }
+            if w.kind == .controllerTouchpad {
+                controllerTouch(w, touch, .moved)
+                continue
+            }
             let p = touch.location(in: self)
+            if w.movable, w.kind.isButtonLike, !w.peek, moveDuringPlay(w, to: p) {
+                continue
+            }
             if w.kind == .button, w.slide, !w.toggle, let other = widgetAt(p), other.id != id,
                other.kind == .button, other.slide, !other.toggle {
                 // Rolling a thumb from one slide button onto another presses that one instead
@@ -390,6 +429,10 @@ import UIKit
             guard let id = touchOwners.removeValue(forKey: ObjectIdentifier(touch)), let w = widget(id) else { continue }
             if w.kind == .mousePad {
                 live[id]?.touchpad?.touchesEnded([touch])
+                continue
+            }
+            if w.kind == .controllerTouchpad {
+                controllerTouch(w, touch, .ended)
                 continue
             }
             touchEnded(w, at: touch.location(in: self))
@@ -422,6 +465,9 @@ import UIKit
         guard l.fingers == 1 else { return }
         l.origin = p
         l.last = p
+        l.moved = false
+        l.moving = false
+        l.downTime = CACurrentMediaTime()
         let view = views[w.id]
         switch w.kind {
         case .button, .gyroAim, .gyroPause:
@@ -445,6 +491,10 @@ import UIKit
             l.dockTimer?.invalidate()
             haptic(w)
             view?.pressed = true
+            if w.peek {
+                l.peekTarget = nil
+                setFolder(w, collapsed: false)
+            }
         case .stickPad, .directionPad:
             view?.showTouch(origin: p.relative(to: view), at: p.relative(to: view))
             if w.kind == .directionPad { updateDirections(w, at: p) }
@@ -459,7 +509,18 @@ import UIKit
         case .scrollPad:
             l.scrollRemainder = 0
             view?.showTouch(origin: nil, at: p.relative(to: view))
-        case .overlay, .mousePad, .blocker:
+        case .screenPad:
+            point(w, at: p)
+            view?.showTouch(origin: nil, at: p.relative(to: view))
+            // Held still a moment: the left button goes down and the finger drags
+            l.holdTimer?.invalidate()
+            l.holdTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self, weak l] _ in
+                guard let self, let l, l.fingers > 0, !l.moved, !l.mouseHeld else { return }
+                l.mouseHeld = true
+                self.inputs.press(.mouse(1), by: w.id)
+                self.haptic(w)
+            }
+        case .overlay, .mousePad, .blocker, .controllerTouchpad:
             break
         }
     }
@@ -467,6 +528,7 @@ import UIKit
     private func touchMoved(_ w: MNWidget, at p: CGPoint) {
         guard let l = live[w.id], l.fingers > 0 else { return }
         let view = views[w.id]
+        if hypot(p.x - l.origin.x, p.y - l.origin.y) > 10 { l.moved = true }
         switch w.kind {
         case .stickPad:
             // Floating stick: the base follows a thumb that goes past the edge, so turning back
@@ -499,10 +561,35 @@ import UIKit
             // units (1/30 notch) per point at sensitivity 1
             let k = 4 * w.sensitivity * MNTouchPrefs.scrollSpeed * (MNTouchPrefs.reverseScroll ? -1 : 1)
             let units = (p.y - l.last.y) * k + l.scrollRemainder
-            let whole = units.rounded(.towardZero)
-            l.scrollRemainder = units - whole
-            MNInput.scroll(Int16(clamping: Int(whole)))
+            if w.notched {
+                // Whole notches (120 units, so 30 pt at sensitivity 1), each with a tick
+                let notches = (units / 120).rounded(.towardZero)
+                l.scrollRemainder = units - notches * 120
+                for _ in 0..<Int(abs(notches)) {
+                    MNInput.scroll(notches > 0 ? 120 : -120)
+                    notchFeedback()
+                }
+            }
+            else {
+                let whole = units.rounded(.towardZero)
+                l.scrollRemainder = units - whole
+                MNInput.scroll(Int16(clamping: Int(whole)))
+            }
             view?.showTouch(origin: nil, at: p.relative(to: view))
+        case .screenPad:
+            point(w, at: p)
+            view?.showTouch(origin: nil, at: p.relative(to: view))
+        case .folder where w.peek:
+            // The widget in this folder under the finger lights up; letting go there presses it
+            let target = widgetAt(p).flatMap { t in
+                t.id != w.id && isInside(t, w.id) && [.button, .function, .gyroAim, .gyroPause].contains(t.kind) ? t.id : nil
+            }
+            if target != l.peekTarget {
+                if let old = l.peekTarget, live[old]?.fingers ?? 0 == 0, live[old]?.latched != true { views[old]?.pressed = false }
+                views[target ?? ""]?.pressed = true
+                if target != nil { notchFeedback() }
+                l.peekTarget = target
+            }
         default:
             break
         }
@@ -520,7 +607,8 @@ import UIKit
         }
         guard l.fingers == 0 else { return }
         let view = views[w.id]
-        let inside = view.map { $0.frame.insetBy(dx: -12, dy: -12).contains(p) } ?? false
+        // A widget just moved during play doesn't also run its action
+        let inside = !finishPlayMove(w) && (view.map { $0.frame.insetBy(dx: -12, dy: -12).contains(p) } ?? false)
         switch w.kind {
         case .button, .gyroAim, .gyroPause:
             if !w.toggle {
@@ -532,10 +620,25 @@ import UIKit
             }
         case .function:
             view?.pressed = false
-            if inside { onFunction?(w.function) }
+            if inside {
+                lastFunctionRect = view?.frame ?? .zero
+                onFunction?(w.function)
+            }
         case .folder:
             view?.pressed = false
-            if inside { toggleFolder(w) }
+            if w.peek {
+                let target = l.peekTarget.flatMap { widget($0) }
+                l.peekTarget = nil
+                // Closing lets go of what's inside, so the pick is pressed after
+                setFolder(w, collapsed: true)
+                if let target {
+                    views[target.id]?.pressed = false
+                    pressOnce(target)
+                }
+            }
+            else if inside {
+                toggleFolder(w)
+            }
         case .cameraPad:
             l.pending.dx += p.x - l.last.x
             l.pending.dy += p.y - l.last.y
@@ -546,14 +649,30 @@ import UIKit
             }
         case .scrollPad:
             view?.showTouch(origin: nil, at: nil)
+        case .screenPad:
+            l.holdTimer?.invalidate()
+            l.holdTimer = nil
+            view?.showTouch(origin: nil, at: nil)
+            if l.mouseHeld {
+                l.mouseHeld = false
+                inputs.release(.mouse(1), by: w.id)
+            }
+            else if !l.moved {
+                pulse([.mouse(1)], by: w.id + "#tap")
+            }
         case .stickPad, .triggerPad, .directionPad:
+            if w.kind == .directionPad {
+                // A toggled key flips back as the thumb leaves its zone
+                if l.walking, w.walkToggle { pulse([.key(w.walkKey)], by: w.id + "#tap") }
+                if l.sprinting, w.sprintToggle { pulse([.key(w.sprintKey)], by: w.id + "#tap") }
+            }
             inputs.releaseAll(by: w.id)
             l.mask = 0
             l.walking = false
             l.sprinting = false
             view?.showTouch(origin: nil, at: nil)
             view?.showLevel(0)
-        case .overlay, .mousePad, .blocker:
+        case .overlay, .mousePad, .blocker, .controllerTouchpad:
             break
         }
     }
@@ -623,12 +742,40 @@ import UIKit
 
     /// One quick press and release (turbo)
     private func tap(_ w: MNWidget) {
-        let holder = w.id + "#tap"
-        inputs.press(w.inputs, by: holder)
         live[w.id]?.turboTaps += 1
-        let hold = min(30.0, Double(max(w.turboMs, 40)) / 2) / 1000
-        DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
-            self?.inputs.release(w.inputs, by: holder)
+        pulse(w.inputs, by: w.id + "#tap", ms: min(30.0, Double(max(w.turboMs, 40)) / 2))
+    }
+
+    /// Presses and lets go a moment later
+    private func pulse(_ list: [WidgetInput], by holder: String, ms: Double = 30) {
+        inputs.press(list, by: holder)
+        DispatchQueue.main.asyncAfter(deadline: .now() + ms / 1000) { [weak self] in
+            self?.inputs.release(list, by: holder)
+        }
+    }
+
+    /// A widget picked from a peek folder: one press, as if tapped
+    private func pressOnce(_ w: MNWidget) {
+        haptic(w)
+        switch w.kind {
+        case .function:
+            lastFunctionRect = views[w.id]?.frame ?? .zero
+            onFunction?(w.function)
+        case .button, .gyroAim, .gyroPause:
+            let l = state(w.id)
+            if w.toggle {
+                l.latched.toggle()
+                if l.latched { activate(w) } else { deactivate(w) }
+            }
+            else if l.fingers == 0 {
+                activate(w)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self, weak l] in
+                    guard let self, let l, l.fingers == 0, !l.latched, let current = self.widget(w.id) else { return }
+                    self.deactivate(current)
+                }
+            }
+        default:
+            break
         }
     }
 
@@ -682,6 +829,22 @@ import UIKit
         l.sprinting = false
         // A dropped trackpad lets go of a drag it was holding
         l.touchpad = nil
+        for pointer in l.pointers.values {
+            MNInput.controllerTouch(.up, pointer: pointer, x: 0.5, y: 0.5)
+        }
+        l.pointers = [:]
+        l.holdTimer?.invalidate()
+        l.holdTimer = nil
+        l.mouseHeld = false
+        if l.moving {
+            l.moving = false
+            playMoveID = nil
+            guideLayer.removeFromSuperlayer()
+        }
+        if let target = l.peekTarget {
+            l.peekTarget = nil
+            if live[target]?.latched != true { views[target]?.pressed = false }
+        }
         if l.gyroHeld, let w = widget(id) {
             deactivate(w)
         }
@@ -724,22 +887,125 @@ import UIKit
         }
         l.mask = mask
         // Walk key close to the start, sprint key far out
+        // Adapted from VoidLink (GPLv3), OnScreenWidgetView.swift (walk/sprint key action type):
+        // a toggle key is tapped on entering its zone and again on leaving it
         let walk = w.walkKey > 0 && dist < w.walkBelow
         if walk != l.walking {
-            if walk { inputs.press(.key(w.walkKey), by: w.id) } else { inputs.release(.key(w.walkKey), by: w.id) }
+            if w.walkToggle { pulse([.key(w.walkKey)], by: w.id + "#tap") }
+            else if walk { inputs.press(.key(w.walkKey), by: w.id) }
+            else { inputs.release(.key(w.walkKey), by: w.id) }
             l.walking = walk
         }
         let sprint = w.sprintKey > 0 && dist > w.sprintAbove
         if sprint != l.sprinting {
-            if sprint {
-                inputs.press(.key(w.sprintKey), by: w.id)
-                haptic(w)
-            }
-            else {
-                inputs.release(.key(w.sprintKey), by: w.id)
-            }
+            if w.sprintToggle { pulse([.key(w.sprintKey)], by: w.id + "#tap") }
+            else if sprint { inputs.press(.key(w.sprintKey), by: w.id) }
+            else { inputs.release(.key(w.sprintKey), by: w.id) }
+            if sprint { haptic(w) }
             l.sprinting = sprint
         }
+    }
+
+    // MARK: Moving during play
+
+    private func startCenters() -> [String: CGPoint] {
+        Dictionary(widgets.map { ($0.id, CGPoint(x: $0.x, y: $0.y)) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Movable during play: once the finger has rested half a second, dragging moves the widget
+    /// (a folder brings what's in it). True while this touch is moving it.
+    private func moveDuringPlay(_ w: MNWidget, to p: CGPoint) -> Bool {
+        guard let l = live[w.id], l.fingers > 0 else { return false }
+        if !l.moving {
+            let distance = hypot(p.x - l.origin.x, p.y - l.origin.y)
+            guard distance > 10 else { return false }
+            guard playMoveID == nil, !l.moved, CACurrentMediaTime() - l.downTime > 0.5 else {
+                // Moved off straight away: an ordinary press
+                l.moved = true
+                return false
+            }
+            l.moving = true
+            playMoveID = w.id
+            dragStartCenters = startCenters()
+            haptic(w)
+        }
+        move(w.id, by: CGVector(dx: p.x - l.origin.x, dy: p.y - l.origin.y))
+        return true
+    }
+
+    /// Ends a move during play and saves the layout where it came from (this game's, else every
+    /// game's). True if this widget was being moved.
+    private func finishPlayMove(_ w: MNWidget) -> Bool {
+        guard let l = live[w.id], l.moving else { return false }
+        l.moving = false
+        playMoveID = nil
+        guideLayer.removeFromSuperlayer()
+        if let osc { osc.saveLayout(forThisGame: osc.hasLayoutForThisGame()) }
+        return true
+    }
+
+    // MARK: Layouts function
+
+    /// The Layouts function button: pick a saved layout without opening the editor. It becomes the
+    /// layout in use, saved where the current one came from.
+    @objc func presentProfiles(from presenter: UIViewController) {
+        guard let osc, presenter.presentedViewController == nil else { return }
+        let posture = osc.currentPosture()
+        let names = OSCProfiles.names(posture)
+        let sheet = UIAlertController(title: "Layouts",
+                                      message: names.isEmpty ? "No saved layouts for the \(OSCProfiles.postureLabel(posture)) screen yet. Save one in Edit Controls › Layouts." : nil,
+                                      preferredStyle: .actionSheet)
+        for name in names {
+            sheet.addAction(UIAlertAction(title: name, style: .default) { [weak self] _ in
+                guard let self, let osc = self.osc, let layout = OSCProfiles.layout(name, posture: posture) else { return }
+                self.releaseAll()
+                osc.applyLayoutDictionary(layout)
+                osc.saveLayout(forThisGame: osc.hasLayoutForThisGame())
+                self.reload()
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        sheet.popoverPresentationController?.sourceView = self
+        sheet.popoverPresentationController?.sourceRect = lastFunctionRect
+        presenter.present(sheet, animated: true)
+    }
+
+    // MARK: PlayStation touchpads and screen pads
+
+    // Adapted from VoidLink (GPLv3), OnScreenWidgetView.swift (handleControllerTouches*): each
+    // finger takes the lowest free pointer id and sends its spot as a fraction of the pad.
+    private func controllerTouch(_ w: MNWidget, _ touch: UITouch, _ phase: UITouch.Phase) {
+        let l = state(w.id)
+        guard let view = views[w.id] else { return }
+        let key = ObjectIdentifier(touch)
+        let p = touch.location(in: view)
+        let x = Float(min(max(p.x / max(view.bounds.width, 1), 0), 1))
+        let y = Float(min(max(p.y / max(view.bounds.height, 1), 0), 1))
+        switch phase {
+        case .began:
+            // A DualShock or DualSense touchpad tracks two fingers
+            guard let id = ([0, 1] as [UInt32]).first(where: { !l.pointers.values.contains($0) }) else { return }
+            l.pointers[key] = id
+            MNInput.controllerTouch(.down, pointer: id, x: x, y: y)
+        case .moved:
+            guard let id = l.pointers[key] else { return }
+            MNInput.controllerTouch(.move, pointer: id, x: x, y: y)
+        default:
+            guard let id = l.pointers.removeValue(forKey: key) else { return }
+            MNInput.controllerTouch(.up, pointer: id, x: x, y: y)
+        }
+        view.showTouch(origin: nil, at: l.pointers.isEmpty ? nil : p)
+    }
+
+    /// Screen pads stand for the host's whole screen: the pointer goes to the same spot there
+    private func point(_ w: MNWidget, at p: CGPoint) {
+        guard let r = views[w.id]?.frame, r.width > 0, r.height > 0 else { return }
+        // Eight steps a point, so the host pointer lands finer than the pad's size in points
+        let scale: CGFloat = 8
+        MNInput.mousePositionX(Int16((min(max(p.x - r.minX, 0), r.width) * scale).rounded()),
+                               y: Int16((min(max(p.y - r.minY, 0), r.height) * scale).rounded()),
+                               width: Int16((r.width * scale).rounded()),
+                               height: Int16((r.height * scale).rounded()))
     }
 
     // MARK: Camera pads
@@ -790,11 +1056,14 @@ import UIKit
     // MARK: Folders
 
     private func toggleFolder(_ w: MNWidget) {
-        let collapse = !(folderCollapsed[w.id] ?? w.collapsed)
+        setFolder(w, collapsed: !(folderCollapsed[w.id] ?? w.collapsed))
+    }
+
+    private func setFolder(_ w: MNWidget, collapsed collapse: Bool) {
         folderCollapsed[w.id] = collapse
         if collapse {
-            // Whatever is held inside lets go as it disappears
-            for child in widgets where child.folder == w.id { releaseWidget(child.id) }
+            // Whatever is held inside (subfolders too) lets go as it disappears
+            for child in widgets where isInside(child, w.id) { releaseWidget(child.id) }
         }
         var shown = w
         shown.collapsed = collapse
@@ -868,6 +1137,14 @@ import UIKit
 
     // MARK: Haptics
 
+    private lazy var notchGenerator = UISelectionFeedbackGenerator()
+
+    /// A light tick: a scroll notch, or a peek folder's finger reaching a widget
+    private func notchFeedback() {
+        guard UserDefaults.standard.object(forKey: "mnHapticsEnabled") as? Bool ?? true else { return }
+        notchGenerator.selectionChanged()
+    }
+
     private var generators: [MNWidget.Haptic: UIImpactFeedbackGenerator] = [:]
 
     private func haptic(_ w: MNWidget) {
@@ -910,7 +1187,7 @@ import UIKit
                 dragMoved = false
                 dragStart = p
                 dragStartFrame = views[dragID!]?.frame ?? .zero
-                dragStartCenters = Dictionary(uniqueKeysWithValues: widgets.map { ($0.id, CGPoint(x: $0.x, y: $0.y)) })
+                dragStartCenters = startCenters()
             case .moved:
                 guard touch == dragTouch, let id = dragID else { continue }
                 if !dragMoved {
@@ -942,8 +1219,8 @@ import UIKit
         let moved = (dx: nx - start.x, dy: ny - start.y)
         for i in widgets.indices {
             let w = widgets[i]
-            // A folder takes what's in it along
-            guard w.id == id || (w.folder == id && widget(id)?.kind == .folder), let s = dragStartCenters[w.id] else { continue }
+            // A folder takes what's in it along, subfolders and theirs too
+            guard w.id == id || isInside(w, id), let s = dragStartCenters[w.id] else { continue }
             widgets[i].x = min(max(s.x + moved.dx, 0), 1)
             widgets[i].y = min(max(s.y + moved.dy, 0), 1)
         }
@@ -973,7 +1250,7 @@ import UIKit
         func tryY(_ v: CGFloat) { if abs(v - p.y) < bestY { bestY = abs(v - p.y); gy = v } }
         tryX(bounds.midX)
         tryY(bounds.midY)
-        for w in widgets where w.id != id && w.folder != id {
+        for w in widgets where w.id != id && !isInside(w, id) {
             let c = CGPoint(x: w.x * bounds.width, y: w.y * bounds.height)
             tryX(c.x)
             tryX(bounds.width - c.x)
