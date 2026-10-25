@@ -80,6 +80,11 @@ typedef NS_ENUM(NSInteger, OnScreenControlsLevel) {
 // The layout being edited, and replacing it (an undoable step), for profiles and templates
 - (NSDictionary<NSString*, id>*) layoutDictionary NS_SWIFT_NAME(layoutDictionary());
 - (void) applyLayoutDictionary:(NSDictionary<NSString*, id>*)layout NS_SWIFT_NAME(applyLayoutDictionary(_:));
+// Sets one entry of the layout being edited without recording an undo step (call pushUndo first),
+// for other kinds of control kept in the same layout, such as on-screen widgets
+- (void) setLayoutValue:(nullable id)value forKey:(NSString*)key NS_SWIFT_NAME(setLayoutValue(_:forKey:));
+// Centres of the controls on screen, for lining other things up with them
+- (NSArray<NSValue*>*) controlCenters NS_SWIFT_NAME(controlCenters());
 
 @end
 

@@ -5,7 +5,8 @@
 //  The bar shown while rearranging the on-screen controls. Top row: undo, layouts (templates,
 //  saved layouts, import/export), options, Cancel and Save. Second row: size, opacity, hide,
 //  tap-to-toggle and reset for the control you tapped, or the opacity of every control when
-//  none is selected.
+//  none is selected. "+" adds an on-screen widget (Widgets/); a selected widget gets its own
+//  second row.
 //  Selecting, dragging, snapping and the layout data itself live in OnScreenControls.
 //
 
@@ -15,11 +16,12 @@ import UniformTypeIdentifiers
 
 @objc final class MNLayoutEditorBar: NSObject {
     @objc static func makeViewController(controls: OnScreenControls,
+                                         widgets: MNWidgetLayer?,
                                          hasGameLayout: Bool,
                                          onSave: @escaping (_ thisGame: Bool) -> Void,
                                          onCancel: @escaping () -> Void,
                                          onMoveBar: @escaping (_ toBottom: Bool) -> Void) -> UIViewController {
-        let bar = LayoutEditorBar(model: LayoutEditorModel(osc: controls), hasGameLayout: hasGameLayout,
+        let bar = LayoutEditorBar(model: LayoutEditorModel(osc: controls, widgets: widgets), hasGameLayout: hasGameLayout,
                                   onSave: onSave, onCancel: onCancel, onMoveBar: onMoveBar)
         let host = UIHostingController(rootView: bar)
         host.view.backgroundColor = .clear
@@ -31,11 +33,18 @@ import UniformTypeIdentifiers
 /// Redraws the bar whenever the controls report a change (selection, layout, undo stack).
 final class LayoutEditorModel: ObservableObject {
     let osc: OnScreenControls
+    /// On-screen widgets, edited in the same session and saved in the same layout
+    let widgets: MNWidgetLayer?
     @Published private(set) var revision = 0
 
-    init(osc: OnScreenControls) {
+    init(osc: OnScreenControls, widgets: MNWidgetLayer? = nil) {
         self.osc = osc
-        osc.editorChanged = { [weak self] in self?.changed() }
+        self.widgets = widgets
+        osc.editorChanged = { [weak self, weak widgets] in
+            widgets?.layoutChanged()
+            self?.changed()
+        }
+        widgets?.onEditorChange = { [weak self] in self?.changed() }
     }
 
     func changed() {
@@ -91,11 +100,33 @@ enum OSCProfiles {
             for id in ids { layout[id] = [0, 0, scale, 1, false] as [Any] }
             return layout
         }
+        // Every gamepad control hidden, with mouse and keyboard widgets instead
+        var desktop: [String: Any] = [:]
+        for id in ids { desktop[id] = [0, 0, 1, 1, true] as [Any] }
+        func widget(_ w: MNWidget, _ x: Double, _ y: Double) -> MNWidget {
+            var w = w
+            w.x = x
+            w.y = y
+            return w
+        }
+        var wasd = MNWidget(kind: .directionPad)
+        wasd.sprintKey = WidgetCatalog.shift
+        desktop[WidgetStore.key] = WidgetStore.value(for: [
+            widget(wasd, 0.16, 0.68),
+            widget(WidgetPickerView.button([.mouse(1)], label: "LMB"), 0.80, 0.80),
+            widget(WidgetPickerView.button([.mouse(3)], label: "RMB"), 0.91, 0.66),
+            widget(WidgetPickerView.button([.key(0x20)], label: "Space"), 0.80, 0.56),
+            widget(WidgetPickerView.button([.key(0x52)]), 0.91, 0.45),
+            widget(WidgetPickerView.button([.key(0x45)]), 0.80, 0.34),
+            widget(WidgetPickerView.button([.key(0x1B)], label: "Esc"), 0.10, 0.22),
+            widget(WidgetPickerView.button([.key(0x09)], label: "Tab"), 0.20, 0.22),
+        ])
         return [
             ("Default", [:]),
             ("Compact", scaled(0.8)),
             ("Large", scaled(1.25)),
             ("Faded", ["opacity": 0.4]),
+            ("Keyboard & Mouse", desktop),
         ]
     }()
 
@@ -134,7 +165,10 @@ enum OSCProfiles {
         }
         var layout: [String: Any] = [:]
         for (key, value) in raw where key.count <= 64 {
-            if key == "opacity", let number = value as? NSNumber {
+            if key == WidgetStore.key {
+                layout[key] = WidgetStore.sanitized(value)
+            }
+            else if key == "opacity", let number = value as? NSNumber {
                 layout[key] = number.doubleValue
             }
             else if let numbers = value as? [NSNumber], (2...8).contains(numbers.count) {
@@ -174,6 +208,8 @@ private struct LayoutEditorBar: View {
     @SwiftUI.State private var importing = false
     @SwiftUI.State private var importError: String?
     @SwiftUI.State private var confirmingCancel = false
+    @SwiftUI.State private var addingWidget = false
+    @SwiftUI.State private var editingWidget: String?
 
     private var osc: OnScreenControls { model.osc }
     private var posture: String { osc.currentPosture() }
@@ -209,6 +245,16 @@ private struct LayoutEditorBar: View {
         } message: {
             Text(importError ?? "")
         }
+        .sheet(isPresented: $addingWidget) {
+            if let layer = model.widgets {
+                WidgetPickerView { layer.add($0) }
+            }
+        }
+        .sheet(isPresented: Binding(get: { editingWidget != nil }, set: { if !$0 { editingWidget = nil } })) {
+            if let layer = model.widgets, let id = editingWidget {
+                WidgetPropertiesView(model: model, layer: layer, id: id)
+            }
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
             do {
                 let file = try OSCProfiles.read(try result.get())
@@ -230,6 +276,11 @@ private struct LayoutEditorBar: View {
                 .disabled(!osc.canUndo())
                 .accessibilityLabel("Undo")
             layoutsMenu
+            if model.widgets != nil {
+                Button { addingWidget = true } label: { Image(systemName: "plus") }
+                    .buttonStyle(PillButtonStyle())
+                    .accessibilityLabel("Add widget")
+            }
             Menu {
                 Toggle("Snap to Guides", isOn: Binding(get: { osc.snapToGuides }, set: { osc.snapToGuides = $0 }))
                 Button {
@@ -277,7 +328,12 @@ private struct LayoutEditorBar: View {
             Section("Templates") {
                 ForEach(OSCProfiles.templates.indices, id: \.self) { i in
                     Button(OSCProfiles.templates[i].name) {
-                        osc.applyLayoutDictionary(OSCProfiles.templates[i].layout)
+                        var layout = OSCProfiles.templates[i].layout
+                        // A template that brings no widgets keeps the ones you placed
+                        if layout[WidgetStore.key] == nil {
+                            layout[WidgetStore.key] = osc.layoutDictionary()[WidgetStore.key]
+                        }
+                        osc.applyLayoutDictionary(layout)
                         activeLayout = nil
                     }
                 }
@@ -372,8 +428,11 @@ private struct LayoutEditorBar: View {
                     .buttonStyle(RoundIconStyle())
                     .accessibilityLabel("Done with this control")
             }
+            else if let layer = model.widgets, let id = layer.selectedID, let widget = layer.widget(id) {
+                widgetRow(layer, widget)
+            }
             else {
-                Text("Tap a control to size, fade or hide it")
+                Text(model.widgets != nil ? "Tap a control or widget to change it" : "Tap a control to size, fade or hide it")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
@@ -386,6 +445,39 @@ private struct LayoutEditorBar: View {
         .padding(.vertical, 6)
         .background(Capsule().fill(Color.black.opacity(0.78)))
         .overlay(Capsule().strokeBorder(Theme.lineStrong))
+    }
+
+    /// The selected widget: size, opacity, its settings, duplicate and delete
+    @ViewBuilder private func widgetRow(_ layer: MNWidgetLayer, _ widget: MNWidget) -> some View {
+        let id = widget.id
+        Text(widget.title)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(Theme.text)
+            .lineLimit(1)
+            .frame(maxWidth: 110)
+        // Size scales width and height together; the corner handle or settings set them apart
+        slider("Size", value: Binding(get: { layer.widget(id)?.w ?? 56 }, set: { size in
+            layer.update(id, undo: false) { w in
+                let ratio = size / max(w.w, 1)
+                w.w = size
+                w.h = min(max(w.h * ratio, 24), 600)
+            }
+        }), in: 24...400)
+        slider("Opacity", value: Binding(get: { layer.widget(id)?.opacity ?? 1 }, set: { value in
+            layer.update(id, undo: false) { $0.opacity = value }
+        }), in: 0.1...1)
+        Button { editingWidget = id } label: { Image(systemName: "slider.horizontal.3") }
+            .buttonStyle(RoundIconStyle())
+            .accessibilityLabel("Widget settings")
+        Button { layer.duplicate(id) } label: { Image(systemName: "plus.square.on.square") }
+            .buttonStyle(RoundIconStyle())
+            .accessibilityLabel("Duplicate widget")
+        Button { layer.delete(id) } label: { Image(systemName: "trash") }
+            .buttonStyle(RoundIconStyle())
+            .accessibilityLabel("Delete widget")
+        Button { layer.select(nil) } label: { Image(systemName: "xmark") }
+            .buttonStyle(RoundIconStyle())
+            .accessibilityLabel("Done with this widget")
     }
 
     /// A labelled slider; one undo step per drag.

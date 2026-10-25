@@ -1092,7 +1092,10 @@ static id MNEntryFromStyle(MNControlStyle s) {
 
 - (void) resetLayout {
     [self pushUndo];
+    // Widgets aren't controls: they stay
+    id widgets = [self layout][@"widgets"];
     [[self layout] removeAllObjects];
+    [self layout][@"widgets"] = widgets;
     [self releaseLatches];
     [self refreshLayout];
 }
@@ -1252,6 +1255,21 @@ static id MNEntryFromStyle(MNControlStyle s) {
     _layout = [layout mutableCopy];
     [self releaseLatches];
     [self refreshLayout];
+}
+
+- (void) setLayoutValue:(id)value forKey:(NSString*)key {
+    [self layout][key] = value;
+    [self notifyEditor];
+}
+
+- (NSArray<NSValue*>*) controlCenters {
+    NSMutableArray<NSValue*>* centers = [NSMutableArray array];
+    for (int i = 0; i < MN_GROUP_COUNT; i++) {
+        if (!CGRectIsNull([self frameForGroup:i])) {
+            [centers addObject:[NSValue valueWithCGPoint:CGPointMake(*MN_GROUP_X[i], *MN_GROUP_Y[i])]];
+        }
+    }
+    return centers;
 }
 
 // The dashed outline around the selected control while editing

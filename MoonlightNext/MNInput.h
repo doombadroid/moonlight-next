@@ -23,6 +23,8 @@ typedef NS_ENUM(int, MNMouseButton) {
     MNMouseButtonLeft = 1,
     MNMouseButtonMiddle = 2,
     MNMouseButtonRight = 3,
+    MNMouseButtonX1 = 4,   // back
+    MNMouseButtonX2 = 5,   // forward
 };
 
 @interface MNInput : NSObject
