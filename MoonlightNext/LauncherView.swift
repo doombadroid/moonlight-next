@@ -59,6 +59,9 @@ struct LauncherView: View {
         .foregroundStyle(Theme.text)
         .overlay { BusyOverlay(message: model.busyMessage) }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: Binding(get: { model.hostDetails != nil }, set: { if !$0 { model.hostDetails = nil } })) {
+            if let host = model.hostDetails { HostInfoSheet(host: host) }
+        }
         .sheet(isPresented: Binding(get: { model.pairingPIN != nil }, set: { if !$0 { model.cancelPairing() } })) {
             PairingSheet(pin: model.pairingPIN ?? "", hostName: model.selectedHost?.name ?? "your PC") {
                 model.cancelPairing()
@@ -82,14 +85,14 @@ struct LauncherView: View {
         } message: {
             Text("If your gaming PC isn't found automatically, enter its IP address.")
         }
-        .confirmationDialog(model.runningAppChoice?.tapped.name ?? "",
+        .confirmationDialog(model.runningAppChoice?.tapped.displayName ?? "",
                             isPresented: Binding(get: { model.runningAppChoice != nil }, set: { if !$0 { model.runningAppChoice = nil } }),
                             titleVisibility: .visible,
                             presenting: model.runningAppChoice) { choice in
             RunningAppActions(choice: choice)
         } message: { choice in
             if choice.tapped.id != choice.running.id {
-                Text("\(choice.running.name ?? "Another app") is currently running")
+                Text("\(choice.running.displayName) is currently running")
             }
         }
         // Controller navigation: B, Y/Menu, face buttons for the dialogs, X options, first-connection sheet
@@ -109,7 +112,7 @@ struct LauncherView: View {
         .navDialog(model.runningAppChoice.map(runningAppDialog))
         .navDialog(nav.optionsApp.map(appOptionsDialog))
         .navDialog(nav.optionsHost.map(hostOptionsDialog))
-        .confirmationDialog(nav.optionsApp?.name ?? "",
+        .confirmationDialog(nav.optionsApp?.displayName ?? "",
                             isPresented: Binding(get: { nav.optionsApp != nil }, set: { if !$0 { nav.optionsApp = nil } }),
                             titleVisibility: .visible,
                             presenting: nav.optionsApp) { app in
@@ -141,7 +144,7 @@ struct LauncherView: View {
 
     private func runningAppDialog(_ choice: RunningAppChoice) -> [NavDialogAction] {
         let same = choice.tapped.id == choice.running.id
-        var actions = [NavDialogAction(button: .a, title: same ? "Resume" : "Resume \(choice.running.name ?? "Running App")") {
+        var actions = [NavDialogAction(button: .a, title: same ? "Resume" : "Resume \(choice.running.displayName)") {
             model.runningAppChoice = nil
             model.stream(choice.running)
         }]
@@ -219,7 +222,7 @@ private struct RunningAppActions: View {
 
     var body: some View {
         let same = choice.tapped.id == choice.running.id
-        Button(same ? "Resume" : "Resume \(choice.running.name ?? "Running App")") {
+        Button(same ? "Resume" : "Resume \(choice.running.displayName)") {
             model.stream(choice.running)
         }
         if let host = choice.running.host {
@@ -251,6 +254,7 @@ private struct ComputersList: View {
                         if host !== model.selectedHost { model.select(host, userInitiated: true) }
                     }
                     .tag(host.uuid as String?)
+                    .contextMenu { HostActions(host: host) }
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 3, leading: 10, bottom: 3, trailing: 10))
@@ -262,8 +266,10 @@ private struct ComputersList: View {
     }
 }
 
-/// A computer in the list. Taps go to the list's selection, not to the row.
+/// A computer in the list. Taps go to the list's selection, not to the row; the Launch
+/// pill is its own button.
 struct HostRow: View {
+    @EnvironmentObject private var model: LauncherModel
     let host: TemporaryHost
     var selected = false
 
@@ -274,10 +280,13 @@ struct HostRow: View {
                 .foregroundStyle(Color(hex: 0xA3A3AA))
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
-                Text(host.name).font(.system(size: 15, weight: .medium))
-                Text(host.statusText).font(.system(size: 12)).foregroundStyle(Theme.muted)
+                Text(host.name).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                Text(host.statusText).font(.system(size: 12)).foregroundStyle(Theme.muted).lineLimit(1)
             }
             Spacer(minLength: 4)
+            if host.state == .online && host.pairState == .paired {
+                launchButton
+            }
             Circle().fill(host.state == .online ? Theme.online : Theme.offline).frame(width: 8, height: 8)
         }
         .padding(.horizontal, 10)
@@ -286,8 +295,44 @@ struct HostRow: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.raised : Color.clear))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? Color(hex: 0x2A2A32) : Color.clear))
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// Resumes the running app, else starts the last one played, else opens the app list.
+    private var launchButton: some View {
+        let app = model.quickLaunchApp(on: host)
+        let resume = app != nil && app?.id == host.currentGame
+        return Button { model.quickLaunch(host) } label: {
+            Label(resume ? "Resume" : "Launch", systemImage: "play.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(Color.black)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 32)
+                .background(Capsule().fill(Theme.accent))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(app.map { "\(resume ? "Resume" : "Launch") \($0.displayName)" } ?? "Open apps on \(host.name)")
+    }
+}
+
+/// Long-press actions for a computer in the list.
+private struct HostActions: View {
+    @EnvironmentObject private var model: LauncherModel
+    let host: TemporaryHost
+
+    var body: some View {
+        if let app = model.quickLaunchApp(on: host) {
+            Button { model.stream(app) } label: {
+                Label("\(app.id == host.currentGame ? "Resume" : "Launch") \(app.displayName)", systemImage: "play.fill")
+            }
+        }
+        Button { model.hostDetails = host } label: { Label("Computer Details", systemImage: "info.circle") }
+        if host.state != .online {
+            Button { model.wake(host) } label: { Label("Wake PC", systemImage: "power") }
+        }
     }
 }
 
@@ -352,6 +397,7 @@ private struct HostDetailView: View {
 
     private var hostMenu: some View {
         Menu {
+            Button { model.hostDetails = host } label: { Label("Computer Details", systemImage: "info.circle") }
             if host.pairState == .paired {
                 Button {
                     model.setShowHiddenApps(!model.showHiddenApps)
@@ -398,7 +444,7 @@ private struct NowRunningCard: View {
                     .font(.system(size: 11, weight: .medium))
                     .tracking(1.5)
                     .foregroundStyle(Theme.accent)
-                Text(app.name ?? "")
+                Text(app.displayName)
                     .font(.system(size: compact ? 15 : 16, weight: .medium))
                     .lineLimit(1)
             }
@@ -434,7 +480,7 @@ private struct AppTile: View {
         }
         .buttonStyle(.plain)
         .navTarget(options: { MNControllerNav.shared.optionsApp = app }) { model.tapped(app) }
-        .accessibilityLabel(app.name ?? "App")
+        .accessibilityLabel(app.displayName)
         .accessibilityHint(running ? "Running" : "")
         .contextMenu {
             Button { model.tapped(app) } label: {
@@ -454,7 +500,8 @@ private struct AppTile: View {
     }
 }
 
-/// Box art, or the app's name on a dark tile until art arrives.
+/// Box art, or MoonLume's tile (a glyph and the app's name) when the host has no art or sent
+/// its blank placeholder.
 private struct BoxArt: View {
     @EnvironmentObject private var model: LauncherModel
     let app: TemporaryApp
@@ -463,19 +510,43 @@ private struct BoxArt: View {
     var body: some View {
         // Reading boxArtVersion re-renders this view when new art finishes decoding
         let _ = model.boxArtVersion
+        if let image = model.boxArt(for: app) {
+            Color.clear
+                .overlay { Image(uiImage: image).resizable().scaledToFill() }
+                .clipped()
+        } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
         ZStack(alignment: .bottomLeading) {
-            Rectangle().fill(Color(hex: 0x1A1A1E))
-            if let image = model.boxArt(for: app) {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else if showTitle {
-                Text(app.name ?? "")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
+            LinearGradient(colors: [Color(hex: 0x17171D), Color(hex: 0x0B0B0E)], startPoint: .top, endPoint: .bottom)
+            Image(systemName: app.isDesktop ? "desktopcomputer" : "gamecontroller")
+                .font(.system(size: showTitle ? 26 : 15, weight: .light))
+                .foregroundStyle(Theme.accent.opacity(0.55))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.bottom, showTitle ? 28 : 0)
+            if showTitle {
+                Text(app.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(3)
                     .padding(10)
             }
         }
-        .clipped()
+        .overlay(alignment: .top) { Theme.accent.opacity(0.35).frame(height: 2) }
     }
+}
+
+extension TemporaryApp {
+    /// The name shown in the launcher: "Steam Big Picture" is just Steam.
+    var displayName: String {
+        let name = self.name ?? "App"
+        return name == "Steam Big Picture" ? "Steam" : name
+    }
+
+    var isDesktop: Bool { name?.caseInsensitiveCompare("Desktop") == .orderedSame }
 }
 
 // MARK: - States

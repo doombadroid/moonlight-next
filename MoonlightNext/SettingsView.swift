@@ -445,6 +445,14 @@ struct SettingsView: View {
                         Text("Without picture in picture, leaving the app ends the stream unless it stays connected for the time chosen. With a USB-C or AirPlay screen connected, \"Video on external display\" shows the game there while this screen keeps the controls and keyboard; Native resolution then matches that screen.")
                     }
                 }
+
+                Section {
+                    NavigationLink {
+                        AboutView()
+                    } label: {
+                        Label("About MoonLume", systemImage: "info.circle")
+                    }
+                }
             }
             .scrollContentBackground(.hidden)
             .background(Theme.ground)
