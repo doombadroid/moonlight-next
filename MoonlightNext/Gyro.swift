@@ -358,8 +358,16 @@ enum GyroSettings {
         }
     }
 
+    /// Gyro aiming drives player 1, so only player 1's pad (ControllerSupport numbers pads from
+    /// index 1) gates or aims it; any pad when none has that index (outside a stream).
+    private static func player1Pads() -> [GCController] {
+        let pads = GCController.controllers()
+        let first = pads.filter { $0.playerIndex == .index1 }
+        return first.isEmpty ? pads : first
+    }
+
     private static func controllerWithGyro() -> GCController? {
-        GCController.controllers().first { $0.motion?.hasRotationRate == true }
+        player1Pads().first { $0.motion?.hasRotationRate == true }
     }
 
     /// "While aiming": L2 / left trigger held on the on-screen controls, the deck or a
@@ -367,7 +375,7 @@ enum GyroSettings {
     private func triggerAllows() -> Bool {
         guard GyroSettings.activation == .whileAiming else { return true }
         if MNInput.aimTriggerHeld() { return true }
-        return GCController.controllers().contains { $0.extendedGamepad?.leftTrigger.isPressed == true }
+        return MNGyro.player1Pads().contains { $0.extendedGamepad?.leftTrigger.isPressed == true }
     }
 
     /// The physical controller's gyro button (Settings › Gyro › Gyro button): hold, toggle or
@@ -375,7 +383,7 @@ enum GyroSettings {
     private func pollGyroButton() -> Bool {
         let button = GyroSettings.button
         guard button != .none else { return true }
-        let down = GCController.controllers().contains { pad in
+        let down = MNGyro.player1Pads().contains { pad in
             pad.extendedGamepad.flatMap { button.input(on: $0) }?.isPressed == true
         }
         defer { buttonWasDown = down }
