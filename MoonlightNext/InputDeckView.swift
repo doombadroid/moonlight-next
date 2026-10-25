@@ -397,6 +397,7 @@ private struct PressSurface: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PressTouchView { PressTouchView() }
     func updateUIView(_ view: PressTouchView, context: Context) { view.onChange = onChange }
+    static func dismantleUIView(_ view: PressTouchView, coordinator: ()) { view.release() }
 }
 
 /// A UIKit view so one- and two-finger pans and taps can be told apart.

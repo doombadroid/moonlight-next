@@ -54,8 +54,9 @@ final class PalmGuard {
     static let shared = PalmGuard()
 
     private static let log = Logger(subsystem: "com.doombadroid.moonlightnext", category: "deck")
-    /// Touches judged to be palms, by identity, with where they are (window coordinates)
-    private var palms: [ObjectIdentifier: CGPoint] = [:]
+    /// Touches judged to be palms. Weak, so a touch whose end never reached us can't linger.
+    private var palms: [WeakTouch] = []
+    private struct WeakTouch { weak var touch: UITouch? }
     private var lastKeyTime: CFTimeInterval = 0
     /// Fresh touches this close to an active palm are part of it
     private let palmReach: CGFloat = 60
@@ -63,10 +64,9 @@ final class PalmGuard {
     /// Judge a touch as it lands (and again as it moves: palms spread after landing).
     /// Once a palm, always a palm until it lifts.
     func isPalm(_ touch: UITouch, landing: Bool = false) -> Bool {
-        let id = ObjectIdentifier(touch)
         let point = touch.location(in: nil)
-        if palms[id] != nil {
-            palms[id] = point
+        palms.removeAll { $0.touch == nil || $0.touch!.phase == .ended || $0.touch!.phase == .cancelled }
+        if palms.contains(where: { $0.touch === touch }) {
             return true
         }
         let level = PalmRejection.level
@@ -76,17 +76,20 @@ final class PalmGuard {
         guard level != .off else { return false }
         var palm = touch.majorRadius > level.maxRadius
         if !palm && landing {
-            palm = palms.values.contains { hypot($0.x - point.x, $0.y - point.y) < palmReach }
+            palm = palms.contains { entry in
+                guard let p = entry.touch?.location(in: nil) else { return false }
+                return hypot(p.x - point.x, p.y - point.y) < palmReach
+            }
         }
         if palm {
-            palms[id] = point
+            palms.append(WeakTouch(touch: touch))
             Self.log.notice("deck palm rejected r=\(Double(touch.majorRadius), format: .fixed(precision: 1), privacy: .public)")
         }
         return palm
     }
 
     func touchLifted(_ touch: UITouch) {
-        palms.removeValue(forKey: ObjectIdentifier(touch))
+        palms.removeAll { $0.touch == nil || $0.touch === touch }
     }
 
     func noteKeyPress() {
@@ -144,6 +147,8 @@ final class KeyTouchView: UIView {
         let delay = PalmRejection.level.confirmDelay
         for touch in touches {
             guard !PalmGuard.shared.isPalm(touch, landing: true), let (r, i) = key(at: touch.location(in: self)) else { continue }
+            // A second finger on a key that's already down adds nothing (both thumbs on space)
+            if held.values.contains(where: { $0.row == r && $0.index == i }) { continue }
             let id = ObjectIdentifier(touch)
             held[id] = Held(row: r, index: i, start: touch.location(in: self), sent: delay == 0)
             if delay == 0 {
@@ -190,16 +195,12 @@ final class KeyTouchView: UIView {
         onDown(r, i)
     }
 
-    /// Let go of every held key (the deck is hiding).
+    /// Let go of every held key (SwiftUI is tearing the grid down).
     func releaseAll() {
         for h in held.values where h.sent { onUp(h.row, h.index) }
         held.removeAll()
     }
 
-    override func removeFromSuperview() {
-        releaseAll()
-        super.removeFromSuperview()
-    }
 }
 
 /// A press-and-hold surface for a single button (the deck's click buttons), palm-guarded.
@@ -210,6 +211,8 @@ final class PressTouchView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
+        // Otherwise UIKit sends only the first touch, and a rejected palm would block the thumb
+        isMultipleTouchEnabled = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -240,9 +243,9 @@ final class PressTouchView: UIView {
         }
     }
 
-    override func removeFromSuperview() {
+    /// Let go if held (SwiftUI is tearing the button down).
+    func release() {
         if touch != nil { onChange(false) }
         touch = nil
-        super.removeFromSuperview()
     }
 }

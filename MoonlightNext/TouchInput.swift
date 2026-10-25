@@ -230,6 +230,8 @@ import UIKit
             last = point(touches[0])
             start = last
         }
+        // A gesture that lost a finger to cancellation (a palm withdrawn) never clicks
+        if cancelled { moved = true }
         guard touches.isEmpty else { return }
 
         holdTimer?.invalidate()
