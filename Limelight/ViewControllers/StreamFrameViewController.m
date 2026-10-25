@@ -160,6 +160,11 @@
         Log(LOG_I, @"Picture in picture closed in the background, ending stream");
         [weakSelf returnToMainFrame];
     };
+    // Holding the quick menu button on a controller shows these as a wheel
+    [MNQuickMenu.shared attach:self items:^NSArray<MNQuickMenuItem*>* {
+        StreamFrameViewController* strongSelf = weakSelf;
+        return strongSelf != nil ? [strongSelf quickMenuItems] : @[];
+    }];
 #endif
     
 #if TARGET_OS_TV
@@ -422,6 +427,50 @@
     _menuButton.menu = [UIMenu menuWithChildren:@[[UIDeferredMenuElement elementWithUncachedProvider:_menuProvider]]];
 
     [self.view addSubview:_menuButton];
+}
+
+// The controller quick menu: the ••• menu's actions, for a wheel picked with a stick
+- (NSArray<MNQuickMenuItem*>*)quickMenuItems {
+    __weak StreamFrameViewController* weakSelf = self;
+    NSMutableArray<MNQuickMenuItem*>* items = [NSMutableArray array];
+    BOOL deckShown = _deckController != nil && !_deckController.view.hidden;
+    [items addObject:[[MNQuickMenuItem alloc] initWithTitle:deckShown ? @"Hide Keyboard" : @"Keyboard & Trackpad"
+                                                     symbol:@"keyboard" destructive:NO
+                                                    handler:^{ [weakSelf toggleInputDeck]; }]];
+    [items addObject:[[MNQuickMenuItem alloc] initWithTitle:_statsUpdateTimer != nil ? @"Hide Stats" : @"Show Stats"
+                                                     symbol:@"chart.bar.xaxis" destructive:NO
+                                                    handler:^{ [weakSelf toggleStatsOverlay]; }]];
+    [items addObject:[[MNQuickMenuItem alloc] initWithTitle:@"Settings" symbol:@"gearshape" destructive:NO
+                                                    handler:^{ [weakSelf presentStreamSettings]; }]];
+    BOOL mouseOn = MNControllerMouse.shared.isOn;
+    [items addObject:[[MNQuickMenuItem alloc] initWithTitle:mouseOn ? @"Controller Mouse Off" : @"Controller Mouse"
+                                                     symbol:@"cursorarrow.motionlines" destructive:NO
+                                                    handler:^{ [MNControllerMouse.shared toggle]; }]];
+    if (MNGyro.isConfigured) {
+        [items addObject:[[MNQuickMenuItem alloc] initWithTitle:MNGyro.isPaused ? @"Resume Gyro" : @"Pause Gyro"
+                                                         symbol:@"gyroscope" destructive:NO
+                                                        handler:^{ MNGyro.isPaused = !MNGyro.isPaused; }]];
+    }
+    if (MNPictureInPicture.shared.canStart) {
+        [items addObject:[[MNQuickMenuItem alloc] initWithTitle:@"Picture in Picture" symbol:@"pip.enter" destructive:NO
+                                                        handler:^{ [MNPictureInPicture.shared start]; }]];
+    }
+    // Same condition as the ••• menu: widgets can be edited even with the controls hidden
+    if ([_streamView layoutControls] != nil) {
+        [items addObject:[[MNQuickMenuItem alloc] initWithTitle:@"Edit Controls"
+                                                         symbol:@"arrow.up.and.down.and.arrow.left.and.right" destructive:NO
+                                                        handler:^{ [weakSelf startLayoutEditor]; }]];
+    }
+    [items addObject:[[MNQuickMenuItem alloc] initWithTitle:@"Quit App" symbol:@"power" destructive:YES handler:^{
+        StreamFrameViewController* s = weakSelf;
+        if (s != nil) {
+            s->_quitOnExit = YES;
+            [s returnToMainFrame];
+        }
+    }]];
+    [items addObject:[[MNQuickMenuItem alloc] initWithTitle:@"Disconnect" symbol:@"xmark" destructive:NO
+                                                    handler:^{ [weakSelf returnToMainFrame]; }]];
+    return items;
 }
 
 // MARK: iPhone Duo hinge + tabletop input deck
@@ -722,6 +771,7 @@ static os_log_t DuoLog(void) {
     }
     _tornDown = YES;
 #if !TARGET_OS_TV
+    [MNQuickMenu.shared detach];
     // Nothing a widget holds may stay down on the host
     [_widgetLayer releaseAll];
     [MNGyro.shared stop];

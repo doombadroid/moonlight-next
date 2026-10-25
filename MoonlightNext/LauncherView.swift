@@ -16,6 +16,8 @@ import SwiftUI
 
 struct LauncherView: View {
     @EnvironmentObject private var model: LauncherModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @ObservedObject private var nav = MNControllerNav.shared
     @SwiftUI.State private var showSettings = false
     @SwiftUI.State private var showAddHost = false
     @SwiftUI.State private var newHostAddress = ""
@@ -90,6 +92,122 @@ struct LauncherView: View {
                 Text("\(choice.running.name ?? "Another app") is currently running")
             }
         }
+        // Controller navigation: B, Y/Menu, face buttons for the dialogs, X options, first-connection sheet
+        .navScreen(back: navBack, settings: { showSettings = true })
+        .navDialog(model.alert == nil ? nil : [NavDialogAction(button: .a, title: "OK") { model.alert = nil }])
+        .navDialog(!showAddHost ? nil : [
+            NavDialogAction(button: .a, title: "Add") {
+                model.addHost(address: newHostAddress)
+                newHostAddress = ""
+                showAddHost = false
+            },
+            NavDialogAction(button: .b, title: "Cancel") {
+                newHostAddress = ""
+                showAddHost = false
+            },
+        ])
+        .navDialog(model.runningAppChoice.map(runningAppDialog))
+        .navDialog(nav.optionsApp.map(appOptionsDialog))
+        .navDialog(nav.optionsHost.map(hostOptionsDialog))
+        .confirmationDialog(nav.optionsApp?.name ?? "",
+                            isPresented: Binding(get: { nav.optionsApp != nil }, set: { if !$0 { nav.optionsApp = nil } }),
+                            titleVisibility: .visible,
+                            presenting: nav.optionsApp) { app in
+            ForEach(appOptionsDialog(app).filter { $0.button != .b }, id: \.title) { action in
+                Button(action.title, action: action.perform)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(nav.optionsHost?.name ?? "",
+                            isPresented: Binding(get: { nav.optionsHost != nil }, set: { if !$0 { nav.optionsHost = nil } }),
+                            titleVisibility: .visible,
+                            presenting: nav.optionsHost) { host in
+            ForEach(hostOptionsDialog(host).filter { $0.button != .b }, id: \.title) { action in
+                Button(action.title, role: action.button == .y ? .destructive : nil, action: action.perform)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $nav.showWizard) { ControllerWizard() }
+        .onAppear { MNControllerNav.shared.start() }
+    }
+
+    /// B on the launcher: back from a computer's apps to the list, when they're pushed (folded).
+    private var navBack: (() -> Void)? {
+        guard horizontalSizeClass != .regular, model.selectedHost != nil else { return nil }
+        return { model.deselectHost() }
+    }
+
+    // MARK: Controller dialogs (the same actions as the touch menus, on face buttons)
+
+    private func runningAppDialog(_ choice: RunningAppChoice) -> [NavDialogAction] {
+        let same = choice.tapped.id == choice.running.id
+        var actions = [NavDialogAction(button: .a, title: same ? "Resume" : "Resume \(choice.running.name ?? "Running App")") {
+            model.runningAppChoice = nil
+            model.stream(choice.running)
+        }]
+        if let host = choice.running.host {
+            actions.append(NavDialogAction(button: .x, title: same ? "Quit App" : "Quit and Start") {
+                model.runningAppChoice = nil
+                model.quitRunningApp(on: host, thenStream: same ? nil : choice.tapped)
+            })
+        }
+        actions.append(NavDialogAction(button: .b, title: "Cancel") { model.runningAppChoice = nil })
+        return actions
+    }
+
+    private func appOptionsDialog(_ app: TemporaryApp) -> [NavDialogAction] {
+        let running = app.host.map { app.id == $0.currentGame } ?? false
+        var actions = [NavDialogAction(button: .a, title: running ? "Resume" : "Launch") {
+            nav.optionsApp = nil
+            model.tapped(app)
+        }]
+        if running, let host = app.host {
+            actions.append(NavDialogAction(button: .x, title: "Quit App") {
+                nav.optionsApp = nil
+                model.quitRunningApp(on: host)
+            })
+        }
+        if !running || app.hidden {
+            actions.append(NavDialogAction(button: .y, title: app.hidden ? "Show App" : "Hide App") {
+                nav.optionsApp = nil
+                model.toggleHidden(app)
+            })
+        }
+        actions.append(NavDialogAction(button: .b, title: "Cancel") { nav.optionsApp = nil })
+        return actions
+    }
+
+    private func hostOptionsDialog(_ host: TemporaryHost) -> [NavDialogAction] {
+        let main: NavDialogAction
+        if host.state != .online {
+            main = NavDialogAction(button: .a, title: "Wake PC") {
+                nav.optionsHost = nil
+                model.wake(host)
+            }
+        } else if host.pairState == .unpaired {
+            main = NavDialogAction(button: .a, title: "Pair") {
+                nav.optionsHost = nil
+                if host !== model.selectedHost { model.select(host, userInitiated: true) }
+                model.pairSelectedHost()
+            }
+        } else {
+            main = NavDialogAction(button: .a, title: "Refresh Apps") {
+                nav.optionsHost = nil
+                model.select(host, userInitiated: false)
+            }
+        }
+        return [
+            main,
+            NavDialogAction(button: .x, title: "Test Network") {
+                nav.optionsHost = nil
+                model.testNetwork()
+            },
+            NavDialogAction(button: .y, title: "Remove Computer") {
+                nav.optionsHost = nil
+                model.remove(host)
+            },
+            NavDialogAction(button: .b, title: "Cancel") { nav.optionsHost = nil },
+        ]
     }
 }
 
@@ -129,6 +247,9 @@ private struct ComputersList: View {
             }
             ForEach(model.hosts, id: \.uuid) { host in
                 HostRow(host: host, selected: host === model.selectedHost)
+                    .navTarget(pane: 0, options: { MNControllerNav.shared.optionsHost = host }) {
+                        if host !== model.selectedHost { model.select(host, userInitiated: true) }
+                    }
                     .tag(host.uuid as String?)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -284,9 +405,11 @@ private struct NowRunningCard: View {
             Spacer(minLength: 8)
             Button("Resume") { model.stream(app) }
                 .buttonStyle(PillButtonStyle(primary: true))
+                .navTarget { model.stream(app) }
             if !compact, let host = app.host {
                 Button("Quit") { model.quitRunningApp(on: host) }
                     .buttonStyle(PillButtonStyle())
+                    .navTarget { model.quitRunningApp(on: host) }
             }
         }
         .padding(compact ? 10 : 12)
@@ -310,6 +433,7 @@ private struct AppTile: View {
                 .opacity(app.hidden ? 0.4 : 1)
         }
         .buttonStyle(.plain)
+        .navTarget(options: { MNControllerNav.shared.optionsApp = app }) { model.tapped(app) }
         .accessibilityLabel(app.name ?? "App")
         .accessibilityHint(running ? "Running" : "")
         .contextMenu {
@@ -365,7 +489,9 @@ private struct OfflineCard: View {
                   title: "\(host.name) is offline",
                   message: "Wake it with Wake-on-LAN, or check that it's on and connected to this network.") {
             Button("Wake PC") { model.wake(host) }.buttonStyle(PillButtonStyle(primary: true))
+                .navTarget { model.wake(host) }
             Button("Test Network") { model.testNetwork() }.buttonStyle(PillButtonStyle())
+                .navTarget { model.testNetwork() }
         }
     }
 }
@@ -379,6 +505,7 @@ private struct UnpairedCard: View {
                   title: "Pair with \(host.name)",
                   message: "You'll get a PIN to enter on the PC. For Sunshine, enter it in Sunshine's web UI.") {
             Button("Pair") { model.pairSelectedHost() }.buttonStyle(PillButtonStyle(primary: true))
+                .navTarget { model.pairSelectedHost() }
         }
     }
 }
@@ -457,7 +584,9 @@ private struct PairingSheet: View {
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
             Button("Cancel", action: cancel).buttonStyle(PillButtonStyle())
+                .navTarget(activate: cancel)
         }
+        .navScreen(back: cancel)
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.ground.ignoresSafeArea())
