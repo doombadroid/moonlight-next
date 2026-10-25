@@ -6,6 +6,7 @@
 //  saved through DataManager on every change.
 //
 
+import AVKit
 import SwiftUI
 
 /// Resolutions offered. 0x0 is "Native": resolved from the stream's window at launch.
@@ -167,6 +168,7 @@ struct SettingsView: View {
     @AppStorage("mnHapticsEnabled") private var hapticsEnabled = true
     @AppStorage("mnTrackpadSpeed") private var trackpadSpeed = 2.0
     @AppStorage("mnPhoneRumble") private var phoneRumble = true
+    @AppStorage("mnPictureInPicture") private var pictureInPicture = true
     @AppStorage(GyroSettings.modeKey) private var gyroMode = GyroSettings.Mode.off.rawValue
     @AppStorage(GyroSettings.activationKey) private var gyroActivation = GyroSettings.Activation.always.rawValue
     @AppStorage(GyroSettings.sensitivityKey) private var gyroSensitivity = 1.5
@@ -292,8 +294,15 @@ struct SettingsView: View {
                     Toggle("Optimize game settings", isOn: $store.optimizeGames)
                     Toggle("Play audio on PC", isOn: $store.playAudioOnPC)
                     Toggle("Stats overlay", isOn: $store.statsOverlay)
+                    if AVPictureInPictureController.isPictureInPictureSupported() {
+                        Toggle("Picture in picture", isOn: $pictureInPicture)
+                    }
                 } header: {
                     Theme.label("Stream")
+                } footer: {
+                    if AVPictureInPictureController.isPictureInPictureSupported() {
+                        Text("Picture in picture keeps the stream playing in a small window when you leave the app. Close the window to end the stream. With it on, the stream pauses music from other apps.")
+                    }
                 }
             }
             .scrollContentBackground(.hidden)

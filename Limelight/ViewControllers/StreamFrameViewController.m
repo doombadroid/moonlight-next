@@ -138,6 +138,11 @@
 #if !TARGET_OS_TV
     [MNInput setControllerSupport:_controllerSupport];
     [MNGyro.shared startIn:self.view];
+    __weak StreamFrameViewController* weakSelf = self;
+    MNPictureInPicture.shared.onClosedInBackground = ^{
+        Log(LOG_I, @"Picture in picture closed in the background, ending stream");
+        [weakSelf returnToMainFrame];
+    };
 #endif
     
 #if TARGET_OS_TV
@@ -700,6 +705,13 @@ static os_log_t DuoLog(void) {
 }
 
 - (void)inactiveTimerExpired:(NSTimer*)timer {
+#if !TARGET_OS_TV
+    if (MNPictureInPicture.shared.isActive) {
+        // Watching in picture in picture counts as active
+        _inactivityTimer = nil;
+        return;
+    }
+#endif
     Log(LOG_I, @"Terminating stream after inactivity");
 
     [self returnToMainFrame];
@@ -718,13 +730,28 @@ static os_log_t DuoLog(void) {
 
 // This fires when the home button is pressed
 - (void)applicationDidEnterBackground:(UIApplication *)application {
-    Log(LOG_I, @"Terminating stream immediately for backgrounding");
-
     if (_inactivityTimer != nil) {
         [_inactivityTimer invalidate];
         _inactivityTimer = nil;
     }
-    
+
+#if !TARGET_OS_TV
+    if (MNPictureInPicture.enabled) {
+        // Picture in picture starts around the same moment the app backgrounds; give it a
+        // moment, and keep the stream if it did. Audio background mode keeps us running.
+        __weak StreamFrameViewController* weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (MNPictureInPicture.shared.isActive || UIApplication.sharedApplication.applicationState != UIApplicationStateBackground) {
+                return;
+            }
+            Log(LOG_I, @"Terminating stream for backgrounding (no picture in picture)");
+            [weakSelf returnToMainFrame];
+        });
+        return;
+    }
+#endif
+
+    Log(LOG_I, @"Terminating stream immediately for backgrounding");
     [self returnToMainFrame];
 }
 

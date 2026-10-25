@@ -8,6 +8,9 @@
 
 #import "VideoDecoderRenderer.h"
 #import "StreamView.h"
+#if !TARGET_OS_TV
+#import "Moonlight-Swift.h"
+#endif
 
 #include <libavcodec/avcodec.h>
 #include <libavcodec/cbs.h>
@@ -75,6 +78,13 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
         CFRelease(formatDesc);
         formatDesc = nil;
     }
+
+#if !TARGET_OS_TV
+    // A replacement layer (after a decoder failure) becomes the new PiP source
+    if (frameRate > 0) {
+        [MNPictureInPicture.shared attach:displayLayer frameRate:frameRate];
+    }
+#endif
 }
 
 - (id)initWithView:(StreamView*)view callbacks:(id<ConnectionCallbacks>)callbacks streamAspectRatio:(float)aspectRatio useFramePacing:(BOOL)useFramePacing
@@ -109,6 +119,13 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
         _displayLink.preferredFramesPerSecond = self->frameRate;
     }
     [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+
+#if !TARGET_OS_TV
+    // The display link stops in the background, so PiP pulls frames on its own timer
+    __weak VideoDecoderRenderer* weakSelf = self;
+    MNPictureInPicture.shared.pump = ^{ [weakSelf pollFramesPaced:NO]; };
+    [MNPictureInPicture.shared attach:displayLayer frameRate:frameRate];
+#endif
 }
 
 // TODO: Refactor this
@@ -116,13 +133,18 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
 
 - (void)displayLinkCallback:(CADisplayLink *)sender
 {
+    [self pollFramesPaced:framePacing];
+}
+
+- (void)pollFramesPaced:(BOOL)paced
+{
     VIDEO_FRAME_HANDLE handle;
     PDECODE_UNIT du;
     
     while (LiPollNextVideoFrame(&handle, &du)) {
         LiCompleteVideoFrame(handle, DrSubmitDecodeUnit(du));
         
-        if (framePacing) {
+        if (paced) {
             // Calculate the actual display refresh rate
             double displayRefreshRate = 1 / (_displayLink.targetTimestamp - _displayLink.timestamp);
             
@@ -143,6 +165,9 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
 - (void)stop
 {
     [_displayLink invalidate];
+#if !TARGET_OS_TV
+    [MNPictureInPicture.shared detach];
+#endif
 }
 
 #define NALU_START_PREFIX_SIZE 3

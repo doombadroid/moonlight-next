@@ -8,6 +8,9 @@
 
 #import "Connection.h"
 #import "Utils.h"
+#if !TARGET_OS_TV
+#import "Moonlight-Swift.h"
+#endif
 
 #import <VideoToolbox/VideoToolbox.h>
 
@@ -255,7 +258,13 @@ int ArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, v
     SDL_PauseAudioDevice(audioDevice, 0);
     
     // Disable lowering volume of other audio streams (SDL sets AVAudioSessionCategoryOptionDuckOthers by default)
-    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
+#if !TARGET_OS_TV
+    // Picture in picture only starts automatically for non-mixable playback
+    AVAudioSessionCategoryOptions audioOptions = MNPictureInPicture.enabled ? 0 : AVAudioSessionCategoryOptionMixWithOthers;
+#else
+    AVAudioSessionCategoryOptions audioOptions = AVAudioSessionCategoryOptionMixWithOthers;
+#endif
+    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback withOptions:audioOptions error:nil];
     
     return 0;
 }
