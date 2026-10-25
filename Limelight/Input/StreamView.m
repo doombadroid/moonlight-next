@@ -214,6 +214,13 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     }
 }
 
+- (OnScreenControls*) visibleOnScreenControls {
+    if (onScreenControls == nil || oscSuppressed || [onScreenControls getLevel] == OnScreenControlsLevelOff) {
+        return nil;
+    }
+    return onScreenControls;
+}
+
 - (void) setOnScreenControlsSuppressed:(BOOL)suppressed {
     if (onScreenControls == nil || suppressed == oscSuppressed) {
         return;

@@ -62,6 +62,8 @@
 #if !TARGET_OS_TV
     UIScreenEdgePanGestureRecognizer *_exitSwipeRecognizer;
     UIButton *_menuButton;
+    UIViewController *_layoutEditorBar;
+    __weak OnScreenControls *_layoutEditorControls;
 
     // Tabletop input deck (keyboard, trackpad, gamepad) under the fold of an iPhone Duo
     UIViewController *_deckController;
@@ -333,6 +335,12 @@
                                                 identifier:nil
                                                    handler:^(UIAction* action) { MNGyro.isPaused = !MNGyro.isPaused; }]];
         }
+        if ([strongSelf->_streamView visibleOnScreenControls] != nil) {
+            [gyroItems addObject:[UIAction actionWithTitle:@"Edit Controls"
+                                                     image:[UIImage systemImageNamed:@"arrow.up.and.down.and.arrow.left.and.right"]
+                                                identifier:nil
+                                                   handler:^(UIAction* action) { [weakSelf startLayoutEditor]; }]];
+        }
         completion([gyroItems arrayByAddingObjectsFromArray:@[
             [UIAction actionWithTitle:deckShown ? @"Hide Keyboard & Trackpad" : @"Keyboard & Trackpad"
                                 image:[UIImage systemImageNamed:@"keyboard"]
@@ -482,6 +490,47 @@ static os_log_t DuoLog(void) {
     // The deck has its own gamepad; on-screen controls over the shrunken video would only cover it
     [_streamView setOnScreenControlsSuppressed:YES];
     return deck;
+}
+
+// Rearranging the on-screen controls: touches drag controls until Save or Cancel
+- (void)startLayoutEditor {
+    OnScreenControls* osc = [_streamView visibleOnScreenControls];
+    if (osc == nil || _layoutEditorBar != nil) {
+        return;
+    }
+    [osc setEditing:YES];
+    _layoutEditorControls = osc;
+    __weak StreamFrameViewController* weakSelf = self;
+    __weak OnScreenControls* weakOsc = osc;
+    _layoutEditorBar = [MNLayoutEditorBar makeViewControllerWithHasGameLayout:[osc hasLayoutForThisGame]
+                                                                      onReset:^{ [weakOsc resetLayout]; }
+                                                                       onSave:^(BOOL thisGame) {
+        [weakOsc saveLayoutForThisGame:thisGame];
+        [weakSelf endLayoutEditor];
+    }
+                                                                     onCancel:^{ [weakSelf endLayoutEditor]; }];
+    [self addChildViewController:_layoutEditorBar];
+    UIView* bar = _layoutEditorBar.view;
+    bar.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:bar];
+    [NSLayoutConstraint activateConstraints:@[
+        [bar.centerXAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerXAnchor],
+        [bar.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
+        [bar.widthAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.widthAnchor constant:-16],
+    ]];
+    [_layoutEditorBar didMoveToParentViewController:self];
+    _menuButton.hidden = YES;
+}
+
+- (void)endLayoutEditor {
+    // Not saved: this puts the saved layout back. Saved: it reloads what was just saved.
+    [_layoutEditorControls setEditing:NO];
+    _layoutEditorControls = nil;
+    [_layoutEditorBar willMoveToParentViewController:nil];
+    [_layoutEditorBar.view removeFromSuperview];
+    [_layoutEditorBar removeFromParentViewController];
+    _layoutEditorBar = nil;
+    _menuButton.hidden = NO;
 }
 
 - (void)presentStreamSettings {

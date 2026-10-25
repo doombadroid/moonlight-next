@@ -36,6 +36,8 @@
 - (void) setOnScreenControlsSuppressed:(BOOL)suppressed;
 // Re-reads the on-screen controls level from the saved settings (changed mid-stream).
 - (void) reloadOnScreenControlsLevel;
+// The on-screen controls when they're showing (for the layout editor), else nil.
+- (OnScreenControls*) visibleOnScreenControls;
 #endif
 
 @end

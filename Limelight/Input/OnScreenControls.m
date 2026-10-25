@@ -64,6 +64,14 @@
     
     BOOL _iPad;
     CGRect _controlArea;
+    // Layout editor: per-control offsets in points for the current posture
+    NSString* _appID;
+    NSString* _layoutPosture;
+    NSMutableDictionary<NSString*, NSValue*>* _layoutOffsets;
+    BOOL _editing;
+    NSString* _dragGroup;
+    UITouch* _dragTouch;
+    CGPoint _dragLast;
     CGRect _usableArea;
     UIView* _view;
     OnScreenControlsLevel _level;
@@ -123,6 +131,7 @@ static float L3_Y;
     _controller = [controllerSupport getOscController];
     _deadTouches = [[NSMutableArray alloc] init];
     _swapABXY = streamConfig.swapABXYButtons;
+    _appID = streamConfig.appID;
     
     [self relayout];
 
@@ -236,6 +245,9 @@ static float L3_Y;
 }
 
 - (void) updateControls {
+    // Controls jump to their new place while dragging, without implicit animations
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     switch (_level) {
         case OnScreenControlsLevelOff:
             [self hideButtons];
@@ -249,6 +261,7 @@ static float L3_Y;
             // GCGamepad is missing triggers, both analog sticks,
             // and the select button
             [self setupGamepadControls];
+            [self applyLayoutOffsets];
             
             [self hideButtons];
             [self hideBumpers];
@@ -260,6 +273,7 @@ static float L3_Y;
         case OnScreenControlsLevelAutoGCExtendedGamepad:
             // GCExtendedGamepad is missing R3, L3, and select
             [self setupExtendedGamepadControls];
+            [self applyLayoutOffsets];
             
             [self hideButtons];
             [self hideBumpers];
@@ -272,6 +286,7 @@ static float L3_Y;
             // This variant of GCExtendedGamepad has L3 and R3 but
             // is still missing Select
             [self setupExtendedGamepadControls];
+            [self applyLayoutOffsets];
             
             [self hideButtons];
             [self hideBumpers];
@@ -282,6 +297,7 @@ static float L3_Y;
             break;
         case OnScreenControlsLevelSimple:
             [self setupSimpleControls];
+            [self applyLayoutOffsets];
             
             [self hideTriggers];
             [self hideL3R3];
@@ -292,6 +308,7 @@ static float L3_Y;
             break;
         case OnScreenControlsLevelFull:
             [self setupComplexControls];
+            [self applyLayoutOffsets];
             
             [self drawButtons];
             [self drawStartSelect];
@@ -304,6 +321,7 @@ static float L3_Y;
             Log(LOG_W, @"Unknown on-screen controls level: %d", (int)_level);
             break;
     }
+    [CATransaction commit];
 }
 
 // For GCExtendedGamepad controls we move start, select, L3, and R3 to the button
@@ -687,7 +705,156 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
     [_r3Button removeFromSuperlayer];
 }
 
+#pragma mark - Layout editor
+
+// Movable groups and the statics that position them; the layer says whether it's on screen
+static NSString* const MN_GROUPS[] = { @"dpad", @"abxy", @"ls", @"rs", @"start", @"select",
+                                       @"l1", @"l2", @"r1", @"r2", @"l3", @"r3" };
+static float* const MN_GROUP_X[] = { &D_PAD_CENTER_X, &BUTTON_CENTER_X, &LS_CENTER_X, &RS_CENTER_X, &START_X, &SELECT_X,
+                                     &L1_X, &L2_X, &R1_X, &R2_X, &L3_X, &R3_X };
+static float* const MN_GROUP_Y[] = { &D_PAD_CENTER_Y, &BUTTON_CENTER_Y, &LS_CENTER_Y, &RS_CENTER_Y, &START_Y, &SELECT_Y,
+                                     &L1_Y, &L2_Y, &R1_Y, &R2_Y, &L3_Y, &R3_Y };
+static const int MN_GROUP_COUNT = sizeof(MN_GROUPS) / sizeof(MN_GROUPS[0]);
+
+- (CALayer*) layerForGroup:(int)i {
+    CALayer* layers[] = { _upButton, _aButton, _leftStickBackground, _rightStickBackground, _startButton, _selectButton,
+                          _l1Button, _l2Button, _r1Button, _r2Button, _l3Button, _r3Button };
+    return layers[i];
+}
+
+// Layouts are saved per posture (the folded outer display, a phone in landscape, the roomy
+// inner display), since one arrangement never fits all three, and optionally per game.
+- (NSString*) currentPosture {
+    if (_iPad) {
+        return @"roomy";
+    }
+    BOOL square = _controlArea.size.height > 0 && _controlArea.size.width / _controlArea.size.height < 1.8;
+    return square ? @"square" : @"wide";
+}
+
+- (NSString*) layoutKeyForApp:(NSString*)appID {
+    return appID != nil ? [NSString stringWithFormat:@"mnOSCLayout.%@.%@", appID, [self currentPosture]]
+                        : [NSString stringWithFormat:@"mnOSCLayout.%@", [self currentPosture]];
+}
+
+- (void) loadLayoutOffsets {
+    _layoutPosture = [self currentPosture];
+    NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+    NSDictionary* saved = (_appID != nil ? [defaults dictionaryForKey:[self layoutKeyForApp:_appID]] : nil)
+                          ?: [defaults dictionaryForKey:[self layoutKeyForApp:nil]];
+    _layoutOffsets = [NSMutableDictionary dictionary];
+    for (NSString* name in saved) {
+        NSArray* xy = saved[name];
+        if ([xy isKindOfClass:NSArray.class] && xy.count == 2) {
+            _layoutOffsets[name] = [NSValue valueWithCGPoint:CGPointMake([xy[0] doubleValue], [xy[1] doubleValue])];
+        }
+    }
+}
+
+- (void) applyLayoutOffsets {
+    if (_layoutOffsets == nil || ![_layoutPosture isEqualToString:[self currentPosture]]) {
+        [self loadLayoutOffsets];
+    }
+    CGRect b = _view.bounds;
+    for (int i = 0; i < MN_GROUP_COUNT; i++) {
+        NSValue* offset = _layoutOffsets[MN_GROUPS[i]];
+        if (offset == nil) {
+            continue;
+        }
+        CGPoint d = offset.CGPointValue;
+        *MN_GROUP_X[i] = MIN(MAX(*MN_GROUP_X[i] + d.x, CGRectGetMinX(b)), CGRectGetMaxX(b));
+        *MN_GROUP_Y[i] = MIN(MAX(*MN_GROUP_Y[i] + d.y, CGRectGetMinY(b)), CGRectGetMaxY(b));
+    }
+}
+
+- (void) setEditing:(BOOL)editing {
+    _editing = editing;
+    _dragGroup = nil;
+    _dragTouch = nil;
+    if (!editing) {
+        // Leaving without saving puts the saved layout back
+        [self loadLayoutOffsets];
+    }
+    if (_visible) {
+        [self updateControls];
+    }
+}
+
+- (BOOL) isEditing {
+    return _editing;
+}
+
+- (void) resetLayout {
+    [_layoutOffsets removeAllObjects];
+    if (_visible) {
+        [self updateControls];
+    }
+}
+
+- (void) saveLayoutForThisGame:(BOOL)thisGame {
+    NSMutableDictionary* plist = [NSMutableDictionary dictionary];
+    for (NSString* name in _layoutOffsets) {
+        CGPoint d = _layoutOffsets[name].CGPointValue;
+        plist[name] = @[ @(d.x), @(d.y) ];
+    }
+    NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+    if (thisGame && _appID != nil) {
+        [defaults setObject:plist forKey:[self layoutKeyForApp:_appID]];
+    }
+    else {
+        [defaults setObject:plist forKey:[self layoutKeyForApp:nil]];
+        // A layout saved for every game replaces this game's own
+        if (_appID != nil) {
+            [defaults removeObjectForKey:[self layoutKeyForApp:_appID]];
+        }
+    }
+}
+
+- (BOOL) hasLayoutForThisGame {
+    return _appID != nil && [NSUserDefaults.standardUserDefaults dictionaryForKey:[self layoutKeyForApp:_appID]] != nil;
+}
+
+// While editing, a touch grabs the nearest visible control and drags it; nothing reaches the PC.
+- (void) handleEditTouches:(NSSet*)touches phase:(UITouchPhase)phase {
+    for (UITouch* touch in touches) {
+        CGPoint p = [touch locationInView:_view];
+        if (phase == UITouchPhaseBegan && _dragTouch == nil) {
+            CGFloat best = 80;
+            for (int i = 0; i < MN_GROUP_COUNT; i++) {
+                if ([self layerForGroup:i].superlayer == nil) {
+                    continue;
+                }
+                CGFloat dist = hypot(p.x - *MN_GROUP_X[i], p.y - *MN_GROUP_Y[i]);
+                if (dist < best) {
+                    best = dist;
+                    _dragGroup = MN_GROUPS[i];
+                }
+            }
+            if (_dragGroup != nil) {
+                _dragTouch = touch;
+                _dragLast = p;
+            }
+        }
+        else if (touch == _dragTouch && phase == UITouchPhaseMoved) {
+            CGPoint d = _layoutOffsets[_dragGroup].CGPointValue;
+            d.x += p.x - _dragLast.x;
+            d.y += p.y - _dragLast.y;
+            _layoutOffsets[_dragGroup] = [NSValue valueWithCGPoint:d];
+            _dragLast = p;
+            [self updateControls];
+        }
+        else if (touch == _dragTouch) {
+            _dragTouch = nil;
+            _dragGroup = nil;
+        }
+    }
+}
+
 - (BOOL) handleTouchMovedEvent:touches {
+    if (_editing) {
+        [self handleEditTouches:touches phase:UITouchPhaseMoved];
+        return YES;
+    }
     BOOL updated = false;
     BOOL buttonTouch = false;
     float rsMaxX = RS_CENTER_X + STICK_OUTER_SIZE / 2;
@@ -793,6 +960,10 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
 }
 
 - (BOOL)handleTouchDownEvent:touches {
+    if (_editing) {
+        [self handleEditTouches:touches phase:UITouchPhaseBegan];
+        return YES;
+    }
     BOOL updated = false;
     BOOL stickTouch = false;
     BOOL buttonPressed = false;
@@ -930,6 +1101,10 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
 }
 
 - (BOOL)handleTouchUpEvent:touches {
+    if (_editing) {
+        [self handleEditTouches:touches phase:UITouchPhaseEnded];
+        return YES;
+    }
     BOOL updated = false;
     BOOL touched = false;
     for (UITouch* touch in touches) {
