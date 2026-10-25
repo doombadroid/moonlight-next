@@ -227,7 +227,7 @@ struct SettingsView: View {
                     if store.hdrSupported {
                         Toggle("HDR", isOn: $store.enableHdr)
                     }
-                    if store.yuv444Supported && store.codec != StreamCodec.h264.rawValue {
+                    if store.yuv444Supported && [StreamCodec.auto.rawValue, StreamCodec.hevc.rawValue].contains(store.codec) {
                         Toggle("Full color (4:4:4)", isOn: $yuv444)
                     }
                     Toggle("Full color range", isOn: $fullColorRange)
