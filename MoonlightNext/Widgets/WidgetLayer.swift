@@ -144,10 +144,10 @@ import UIKit
     }
 
     private func apply(_ list: [MNWidget]) {
-        let oldIDs = Set(widgets.map(\.id))
         widgets = list
         let ids = Set(list.map(\.id))
-        for id in oldIDs.subtracting(ids) {
+        // Views left from widgets that are gone (deleted, undone, another layout)
+        for id in Set(views.keys).subtracting(ids) {
             releaseWidget(id)
             views.removeValue(forKey: id)?.removeFromSuperview()
             live[id] = nil
