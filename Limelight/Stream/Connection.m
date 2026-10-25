@@ -420,6 +420,11 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t
     [_callbacks setControllerLed:controllerNumber r:r g:g b:b];
 }
 
+void ClSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlags, uint8_t typeLeft, uint8_t typeRight, uint8_t *left, uint8_t *right)
+{
+    [_callbacks setAdaptiveTriggers:controllerNumber eventFlags:eventFlags typeLeft:typeLeft typeRight:typeRight left:left right:right];
+}
+
 -(void) terminate
 {
     // Interrupt any action blocking LiStartConnection(). This is
@@ -540,6 +545,7 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t
     _clCallbacks.rumbleTriggers = ClRumbleTriggers;
     _clCallbacks.setMotionEventState = ClSetMotionEventState;
     _clCallbacks.setControllerLED = ClSetControllerLED;
+    _clCallbacks.setAdaptiveTriggers = ClSetAdaptiveTriggers;
 
     return self;
 }

@@ -48,6 +48,8 @@ typedef struct {
 @property (nonatomic)                   float lastBatteryLevel;
 
 @property (nonatomic)                   BOOL reportedArrival;
+// Player 1 reports the phone's own motion sensors as this controller's (iOS, PlayStation type)
+@property (nonatomic)                   BOOL usesPhoneMotion;
 @property (nonatomic)                   Controller* _Nullable mergedWithController;
 
 @end

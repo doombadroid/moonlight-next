@@ -57,14 +57,47 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
 
 #define MAX_MAGNITUDE(x, y) (abs(x) > abs(y) ? (x) : (y))
 
+#if !TARGET_OS_TV
+// Scale a stick radially so any deflection starts at `minimum` of full travel (0...1)
+static void LiftStick(short* x, short* y, double minimum)
+{
+    double length = hypot(*x, *y) / 0x7FFE;
+    if (length <= 0) {
+        return;
+    }
+    double lifted = minimum + (1 - minimum) * MIN(length, 1);
+    *x = (short)(*x / length * lifted);
+    *y = (short)(*y / length * lifted);
+}
+#endif
+
 -(void) rumble:(unsigned short)controllerNumber lowFreqMotor:(unsigned short)lowFreqMotor highFreqMotor:(unsigned short)highFreqMotor
 {
     Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
 #if !TARGET_OS_TV
-    if (controller == nil && controllerNumber == 0) {
-        // No physical pad for player 1: the phone is the controller (on-screen controls or the
-        // input deck), so it rumbles itself
-        [MNPhoneRumble.shared setLow:lowFreqMotor high:highFreqMotor];
+    if (MNRumble.swapMotors) {
+        unsigned short low = lowFreqMotor;
+        lowFreqMotor = highFreqMotor;
+        highFreqMotor = low;
+    }
+    switch ([MNRumble routeForPlayer:controllerNumber hasController:controller != nil]) {
+        case MNRumbleRoutePhone:
+            // The phone is (or stands in for) the controller: on-screen controls, the input
+            // deck, or Settings › Rumble › Phone
+            [MNPhoneRumble.shared setLow:lowFreqMotor high:highFreqMotor];
+            lowFreqMotor = highFreqMotor = 0;
+            break;
+        case MNRumbleRouteNone:
+            if (controllerNumber == 0) {
+                [MNPhoneRumble.shared stop];
+            }
+            lowFreqMotor = highFreqMotor = 0;
+            break;
+        case MNRumbleRouteController:
+            break;
+    }
+    if (controller != nil && [MNVendorRumble.shared rumble:controller.gamepad low:lowFreqMotor high:highFreqMotor]) {
+        // A clamp controller driven over its accessory protocol
         return;
     }
 #endif
@@ -94,6 +127,19 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
 
 - (void) setMotionEventState:(uint16_t)controllerNumber motionType:(uint8_t)motionType reportRateHz:(uint16_t)reportRateHz
 {
+#if !TARGET_OS_TV
+    if (MNControllerPrefs.motionOff) {
+        // Settings › Controller › Motion › Off
+        return;
+    }
+    if (controllerNumber == 0) {
+        Controller* player1 = [_controllers objectForKey:@0] ?: _oscController;
+        if (player1.usesPhoneMotion) {
+            [MNGyro.shared setHostMotionWithType:motionType rateHz:reportRateHz];
+            return;
+        }
+    }
+#endif
     if (@available(iOS 14.0, tvOS 14.0, *)) {
         Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
         if (controller == nil) {
@@ -170,7 +216,12 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         
         // Set the motion sensor state if they require manual activation
         if (controller.gamepad.motion.sensorsRequireManualActivation) {
-            if (controller.gyroTimer || controller.accelTimer) {
+            BOOL keepSensors = NO;
+#if !TARGET_OS_TV
+            // Gyro aiming may be reading this controller's sensors itself
+            keepSensors = MNGyro.wantsControllerSensors;
+#endif
+            if (controller.gyroTimer || controller.accelTimer || keepSensors) {
                 controller.gamepad.motion.sensorsActive = YES;
             }
             else {
@@ -195,6 +246,23 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         
         controller.gamepad.light.color = [[GCColor alloc] initWithRed:(r / 255.0f) green:(g / 255.0f) blue:(b / 255.0f)];
     }
+}
+
+-(void) setAdaptiveTriggers:(uint16_t)controllerNumber eventFlags:(uint8_t)eventFlags typeLeft:(uint8_t)typeLeft typeRight:(uint8_t)typeRight left:(const uint8_t*)left right:(const uint8_t*)right
+{
+#if !TARGET_OS_TV
+    Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
+    GCController* gamepad = controller.gamepad;
+    if (gamepad == nil) {
+        return;
+    }
+    // The payloads only live for this call
+    NSData* leftEffect = (eventFlags & DS_EFFECT_LEFT_TRIGGER) ? [NSData dataWithBytes:left length:DS_EFFECT_PAYLOAD_SIZE] : nil;
+    NSData* rightEffect = (eventFlags & DS_EFFECT_RIGHT_TRIGGER) ? [NSData dataWithBytes:right length:DS_EFFECT_PAYLOAD_SIZE] : nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [MNAdaptiveTriggers applyTo:gamepad leftType:typeLeft left:leftEffect rightType:typeRight right:rightEffect];
+    });
+#endif
 }
 
 -(void) updateLeftStick:(Controller*)controller x:(short)x y:(short)y
@@ -614,22 +682,40 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
                 capabilities |= LI_CCAP_BATTERY_STATE;
             }
         }
-        else {
-            // This is a virtual controller corresponding to our OSC
+    }
+    else {
+        // This is a virtual controller corresponding to our OSC (and the input deck). Upstream
+        // had this inside the iOS 14 availability check, so it never ran.
+        type = LI_CTYPE_XBOX;
+        capabilities = 0;
+        supportedButtonFlags =
+            PLAY_FLAG | BACK_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG |
+            LB_FLAG | RB_FLAG | LS_CLK_FLAG | RS_CLK_FLAG | A_FLAG | B_FLAG | X_FLAG | Y_FLAG;
+#if !TARGET_OS_TV
+        // The phone rumbles for it
+        capabilities |= LI_CCAP_RUMBLE;
+#endif
+    }
 
-            // TODO: Support various layouts and button labels on the OSC
-            type = LI_CTYPE_XBOX;
-            capabilities = 0;
-            supportedButtonFlags =
-                PLAY_FLAG | BACK_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG |
-                LB_FLAG | RB_FLAG | LS_CLK_FLAG | RS_CLK_FLAG | A_FLAG | B_FLAG | X_FLAG | Y_FLAG;
+#if !TARGET_OS_TV
+    if (limeController.playerIndex == 0) {
+        // Player 1 is the phone plus any physical pad merged with it: Settings › Controller picks
+        // the type the host emulates, and a PlayStation pad can carry the phone's motion sensors
+        type = [MNControllerPrefs reportedType:type];
+        limeController.usesPhoneMotion = [MNControllerPrefs usesPhoneMotionForType:type padHasGyro:(capabilities & LI_CCAP_GYRO) != 0];
+        if (limeController.usesPhoneMotion) {
+            capabilities |= LI_CCAP_GYRO | LI_CCAP_ACCEL;
         }
     }
+    if (controller != nil && [MNVendorRumble.shared handles:controller]) {
+        capabilities |= LI_CCAP_RUMBLE;
+    }
+#endif
 
     // Report the new controller to the host
     // NB: This will fail if the connection hasn't been fully established yet
     // and we will try again later.
-    if (LiSendControllerArrivalEvent(controller.playerIndex,
+    if (LiSendControllerArrivalEvent(limeController.playerIndex,
                                      [self getActiveGamepadMask],
                                      type,
                                      supportedButtonFlags,
@@ -730,6 +816,21 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
             
             controller.extendedGamepad.valueChangedHandler = ^(GCExtendedGamepad *gamepad, GCControllerElement *element) {
                 Controller* limeController = [self->_controllers objectForKey:[NSNumber numberWithInteger:gamepad.controller.playerIndex]];
+#if !TARGET_OS_TV
+                if ([MNControllerMouse.shared intercept:gamepad]) {
+                    // Controller mouse mode: this pad drives the host pointer, so the game sees it idle
+                    if (limeController.lastButtonFlags || limeController.lastLeftTrigger || limeController.lastRightTrigger ||
+                        limeController.lastLeftStickX || limeController.lastLeftStickY ||
+                        limeController.lastRightStickX || limeController.lastRightStickY) {
+                        [self clearButtonFlag:limeController flags:limeController.lastButtonFlags];
+                        [self updateLeftStick:limeController x:0 y:0];
+                        [self updateRightStick:limeController x:0 y:0];
+                        [self updateTriggers:limeController left:0 right:0];
+                        [self updateFinished:limeController];
+                    }
+                    return;
+                }
+#endif
                 short leftStickX, leftStickY;
                 short rightStickX, rightStickY;
                 unsigned char leftTrigger, rightTrigger;
@@ -825,6 +926,15 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
                 
                 leftTrigger = gamepad.leftTrigger.value * 0xFF;
                 rightTrigger = gamepad.rightTrigger.value * 0xFF;
+                
+#if !TARGET_OS_TV
+                // Anti-deadzone: lift small deflections past the game's stick deadzone
+                double minimum = MNControllerPrefs.stickMinimum;
+                if (minimum > 0) {
+                    LiftStick(&leftStickX, &leftStickY, minimum);
+                    LiftStick(&rightStickX, &rightStickY, minimum);
+                }
+#endif
                 
                 [self updateLeftStick:limeController x:leftStickX y:leftStickY];
                 [self updateRightStick:limeController x:rightStickX y:rightStickY];
@@ -1261,7 +1371,15 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         [self cleanupControllerHaptics:controller];
         [self cleanupControllerMotion:controller];
         [self cleanupControllerBattery:controller];
+#if !TARGET_OS_TV
+        if (controller.gamepad != nil) {
+            [MNAdaptiveTriggers resetFor:controller.gamepad];
+        }
+#endif
     }
+#if !TARGET_OS_TV
+    [MNVendorRumble.shared stop];
+#endif
     [_controllers removeAllObjects];
     
     for (GCController* controller in [GCController controllers]) {

@@ -2,8 +2,8 @@
 //  PhoneRumble.swift
 //  MoonLume
 //
-//  Game rumble on the phone itself when no physical controller is connected (on-screen
-//  controls or the input deck). The host's two motors map to one continuous Core Haptics
+//  Game rumble on the phone itself: when no physical controller is connected (on-screen
+//  controls or the input deck), or always when Settings › Controller › Rumble is Phone. The host's two motors map to one continuous Core Haptics
 //  event: the stronger motor sets the intensity, and the high-frequency motor's share sets
 //  the sharpness.
 //
@@ -11,11 +11,36 @@
 import CoreHaptics
 import Foundation
 
+@objc enum MNRumbleRoute: Int {
+    case controller, phone, none
+}
+
+/// Where the host's rumble goes (Settings › Controller › Rumble).
+@objc final class MNRumble: NSObject {
+    enum Target: Int { case automatic = 0, phone = 1, off = 2 }
+
+    static let targetKey = "mnRumbleTarget"
+    static let swapKey = "mnRumbleSwap"
+    /// Phone rumble when player 1 has no physical controller (on unless turned off)
+    static let phoneFallbackKey = "mnPhoneRumble"
+
+    static var target: Target { Target(rawValue: UserDefaults.standard.integer(forKey: targetKey)) ?? .automatic }
+    @objc static var swapMotors: Bool { UserDefaults.standard.bool(forKey: swapKey) }
+    static var phoneFallback: Bool { UserDefaults.standard.object(forKey: phoneFallbackKey) as? Bool ?? true }
+
+    /// Only player 1 can rumble the phone; other players' pads keep their own rumble unless it's off.
+    @objc static func route(forPlayer player: Int, hasController: Bool) -> MNRumbleRoute {
+        switch target {
+        case .off: return .none
+        case _ where player != 0: return .controller
+        case .phone: return .phone
+        case .automatic: return hasController ? .controller : (phoneFallback ? .phone : .none)
+        }
+    }
+}
+
 @objc final class MNPhoneRumble: NSObject {
     @objc static let shared = MNPhoneRumble()
-
-    /// Settings › Input › Phone rumble (on unless turned off)
-    static var enabled: Bool { UserDefaults.standard.object(forKey: "mnPhoneRumble") as? Bool ?? true }
 
     private var engine: CHHapticEngine?
     private var player: CHHapticAdvancedPatternPlayer?
@@ -44,7 +69,7 @@ import Foundation
     private func apply(low: UInt16, high: UInt16) {
         guard let engine else { return }
         let intensity = Float(max(low, high)) / 65535
-        guard intensity > 0.02, MNPhoneRumble.enabled else {
+        guard intensity > 0.02 else {
             if running {
                 try? player?.stop(atTime: CHHapticTimeImmediate)
                 running = false
