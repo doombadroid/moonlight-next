@@ -367,6 +367,8 @@ struct SettingsView: View {
 
                 ControllerSettingsSections()
 
+                ControllerNavigationSection()
+
                 Section {
                     Toggle("Optimize game settings", isOn: $store.optimizeGames)
                     choice("Stats") {
@@ -411,6 +413,7 @@ struct SettingsView: View {
             .background(Theme.ground)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .navScreen(back: { dismiss() })
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }

@@ -827,8 +827,10 @@ static void LiftStick(short* x, short* y, double minimum)
             controller.extendedGamepad.valueChangedHandler = ^(GCExtendedGamepad *gamepad, GCControllerElement *element) {
                 Controller* limeController = [self->_controllers objectForKey:[NSNumber numberWithInteger:gamepad.controller.playerIndex]];
 #if !TARGET_OS_TV
-                if ([MNControllerMouse.shared intercept:gamepad]) {
-                    // Controller mouse mode: this pad drives the host pointer, so the game sees it idle
+                // Quick menu: flags of its held button to keep from the host, or -1 for the whole pad
+                int quickMenuHidden = [MNQuickMenu.shared intercept:gamepad];
+                if (quickMenuHidden < 0 || [MNControllerMouse.shared intercept:gamepad]) {
+                    // Controller mouse mode or the quick menu: the game sees this pad idle
                     if (limeController.lastButtonFlags || limeController.lastLeftTrigger || limeController.lastRightTrigger ||
                         limeController.lastLeftStickX || limeController.lastLeftStickY ||
                         limeController.lastRightStickX || limeController.lastRightStickY) {
@@ -949,7 +951,25 @@ static void LiftStick(short* x, short* y, double minimum)
                 [self updateLeftStick:limeController x:leftStickX y:leftStickY];
                 [self updateRightStick:limeController x:rightStickX y:rightStickY];
                 [self updateTriggers:limeController left:leftTrigger right:rightTrigger];
+#if !TARGET_OS_TV
+                if (quickMenuHidden > 0) {
+                    [self clearButtonFlag:limeController flags:quickMenuHidden];
+                }
+#endif
                 [self updateFinished:limeController];
+#if !TARGET_OS_TV
+                // A short press of the quick menu button: send it to the host as a tap after all
+                int tapFlags = [MNQuickMenu.shared takeTap];
+                if (tapFlags != 0) {
+                    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+                        [self setButtonFlag:limeController flags:tapFlags];
+                        [self updateFinished:limeController];
+                        usleep(100 * 1000);
+                        [self clearButtonFlag:limeController flags:tapFlags];
+                        [self updateFinished:limeController];
+                    });
+                }
+#endif
             };
         }
     } else {
