@@ -25,7 +25,6 @@ struct InputDeckView: View {
 
     private enum Mode: String, CaseIterable {
         case keys = "Keys"
-        case split = "Split"
         case gamepad = "Gamepad"
     }
 
@@ -38,7 +37,7 @@ struct InputDeckView: View {
                     ForEach(Mode.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 300)
+                .frame(maxWidth: 240)
                 Spacer()
                 Button(action: onHide) {
                     Image(systemName: "chevron.down")
@@ -51,7 +50,6 @@ struct InputDeckView: View {
             }
             switch Mode(rawValue: mode) {
             case .gamepad: GamepadPanel()
-            case .split: SplitKeyboardDeck()
             default: FullKeyboardDeck()
             }
         }
@@ -189,26 +187,6 @@ private enum Layouts {
         [shift(2.2)] + letters("ZXCVBNM") + [Key(label: ",", vk: VK.comma), Key(label: ".", vk: VK.period), shift(1.6)],
         [ctrl, win, alt, space(4.8)] + arrows,
     ]
-
-    // Split for two thumbs: each half is what one thumb reaches
-    static let splitLeft: [[Key]] = [
-        [Key(label: "esc", vk: VK.escape, accessibility: "Escape")] + letters("12345"),
-        [Key(label: "tab", vk: VK.tab, weight: 1.2, accessibility: "Tab")] + letters("QWERT"),
-        letters("ASDFG"),
-        [shift(1.3)] + letters("ZXCVB"),
-        [Key(label: "ctrl", vk: VK.ctrl, kind: .modifier(.ctrl), accessibility: "Control"),
-         Key(label: "win", vk: VK.win, kind: .modifier(.meta), accessibility: "Windows"),
-         Key(label: "alt", vk: VK.alt, kind: .modifier(.alt), accessibility: "Alt"), space(2.6)],
-    ]
-    static let splitRight: [[Key]] = [
-        letters("67890") + [Key(label: "⌫", vk: VK.backspace, weight: 1.2, accessibility: "Backspace")],
-        letters("YUIOP"),
-        letters("HJKL") + [Key(label: "return", vk: VK.enter, weight: 1.6, kind: .accent, accessibility: "Return")],
-        letters("NM") + [Key(label: ",", vk: VK.comma), Key(label: ".", vk: VK.period),
-                         Key(label: "↑", vk: VK.up, accessibility: "Up")],
-        [space(2.6), Key(label: "←", vk: VK.left, accessibility: "Left"),
-         Key(label: "↓", vk: VK.down, accessibility: "Down"), Key(label: "→", vk: VK.right, accessibility: "Right")],
-    ]
 }
 
 /// Rows of keys sized to the width they're given, each row `keyHeight` tall.
@@ -251,51 +229,17 @@ private struct KeyGrid: View {
     }
 }
 
-/// Full-width keyboard with the trackpad filling everything below it.
+/// Thumb-typing layout: full-width keys along the bottom, where thumbs rest when the Duo is
+/// held like a DS, and the trackpad in the space above them. (A split keyboard was tried:
+/// on this width the thumbs meet in the middle anyway, so splitting only shrank the keys.)
 private struct FullKeyboardDeck: View {
     @StateObject private var state = KeyboardState()
     @SwiftUI.State private var pressed: Set<UUID> = []
 
     var body: some View {
         VStack(spacing: 10) {
-            KeyGrid(rows: Layouts.full, keyHeight: 50, state: state, pressed: $pressed)
             TrackpadPanel()
-        }
-    }
-}
-
-/// Two halves, one per thumb, each tilted toward its thumb; the trackpad is the whole space
-/// between them, with left / right click along its bottom edge like a laptop trackpad.
-private struct SplitKeyboardDeck: View {
-    @StateObject private var state = KeyboardState()
-    @SwiftUI.State private var pressed: Set<UUID> = []
-    private let tilt: Double = 5
-
-    var body: some View {
-        GeometryReader { geo in
-            let gap: CGFloat = 120
-            let half = (geo.size.width - gap - 24) / 2
-            HStack(alignment: .bottom, spacing: 12) {
-                KeyGrid(rows: Layouts.splitLeft, keyHeight: 50, state: state, pressed: $pressed)
-                    .frame(width: half)
-                    .rotationEffect(.degrees(tilt), anchor: .bottomTrailing)
-                VStack(spacing: 6) {
-                    TrackpadSurface()
-                        .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x0B0B0E)))
-                        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.lineStrong))
-                        .accessibilityLabel("Trackpad")
-                    HStack(spacing: 5) {
-                        ClickButton(title: "L click", button: .left, corners: (12, 4))
-                        ClickButton(title: "R click", button: .right, corners: (4, 12))
-                    }
-                    .frame(height: 44)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                KeyGrid(rows: Layouts.splitRight, keyHeight: 50, state: state, pressed: $pressed)
-                    .frame(width: half)
-                    .rotationEffect(.degrees(-tilt), anchor: .bottomLeading)
-            }
-            .frame(maxHeight: .infinity, alignment: .bottom)
+            KeyGrid(rows: Layouts.full, keyHeight: 54, state: state, pressed: $pressed)
         }
     }
 }
