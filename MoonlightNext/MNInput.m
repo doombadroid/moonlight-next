@@ -106,7 +106,12 @@ static __weak ControllerSupport* sControllerSupport;
 }
 
 + (void) controllerTouch:(MNControllerTouchPhase)phase pointer:(uint32_t)pointer x:(float)x y:(float)y {
-    Controller* controller = [sControllerSupport getOscController];
+    ControllerSupport* cs = sControllerSupport;
+    Controller* controller = [cs getOscController];
+    if (phase == MNControllerTouchPhaseDown) {
+        // The host drops touches for a pad it hasn't been told about (once only; no-op after)
+        [cs reportControllerArrival:controller];
+    }
     uint8_t type = phase == MNControllerTouchPhaseDown ? LI_TOUCH_EVENT_DOWN
                  : phase == MNControllerTouchPhaseUp ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_MOVE;
     LiSendControllerTouchEvent(controller != nil ? (uint8_t)controller.playerIndex : 0, type, pointer, x, y, 1.0f);

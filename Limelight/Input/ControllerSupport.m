@@ -1506,6 +1506,16 @@ static void LiftStick(short* x, short* y, double minimum)
         // Report the controller arrival to the host if we haven't done so yet
         [self reportControllerArrival:controller];
     }
+#if !TARGET_OS_TV
+    // Player 1 emulated as a PlayStation pad and no physical one: the phone's pad otherwise only
+    // arrives with the first on-screen input, so until then the host neither asks for its motion
+    // nor takes touchpad-widget touches
+    if (_controllers.count == 0 && [MNControllerPrefs reportedType:LI_CTYPE_XBOX] == LI_CTYPE_PS) {
+        [_controllerStreamLock lock];
+        [self reportControllerArrival:_oscController];
+        [_controllerStreamLock unlock];
+    }
+#endif
 }
 
 -(void) cleanup
