@@ -4,8 +4,6 @@ name: Simulator screenshots
 # taken in the simulator in demo mode (-MNDemoMode YES: a made-up PC and a still in place of
 # the stream, since CI can't reach a streaming host). Manual only.
 on:
-  push:
-    branches: [vl/demo-shots]  # TEMPORARY: dispatch needs the file on master; remove before merging
   workflow_dispatch:
     inputs:
       app_run:
@@ -73,29 +71,32 @@ jobs:
           import json, plistlib, re, subprocess, sys
           j = lambda *a: json.loads(subprocess.check_output(["xcrun", "simctl", "list", *a, "-j"]))
           types = {d["identifier"]: d for d in j("devicetypes")["devicetypes"]}
+          # 6.3" Pro models, for when a profile.plist can't be read
+          KNOWN = {"iPhone 16 Pro", "iPhone 17 Pro", "iPhone 18 Pro"}
           def screen(ident):
-              try:
-                  p = plistlib.load(open(types[ident]["bundlePath"] + "/Contents/Resources/profile.plist", "rb"))
-                  return int(p["mainScreenWidth"]), int(p["mainScreenHeight"])
-              except Exception:
-                  return None
+              d = types[ident]
+              for rel in ("Contents/Resources/profile.plist", "Resources/profile.plist"):
+                  try:
+                      p = plistlib.load(open(f"{d['bundlePath']}/{rel}", "rb"))
+                      return int(p["mainScreenWidth"]), int(p["mainScreenHeight"])
+                  except Exception:
+                      pass
+              return (1206, 2622) if d["name"] in KNOWN else None
           runtimes = [r for r in j("runtimes")["runtimes"] if r["platform"] == "iOS" and r["isAvailable"]]
           def num(name):
               m = re.match(r"iPhone (\d+) Pro$", name)
               return int(m.group(1)) if m else -1
-          for r in reversed(runtimes):
-              supported = [d for d in r.get("supportedDeviceTypes", []) if d["identifier"] in types]
-              for d in supported:
-                  print(f"{r['identifier']}: {d['name']} {screen(d['identifier'])}", file=sys.stderr)
-              pros = sorted((d for d in supported if num(d["name"]) > 0 and screen(d["identifier"]) == (1206, 2622)), key=lambda d: num(d["name"]))
-              if pros:
-                  print(pros[-1]["identifier"], r["identifier"]); break
-              exact = [d for d in supported if screen(d["identifier"]) == (1206, 2622)]
-              if exact:
-                  print(exact[-1]["identifier"], r["identifier"]); break
-          else:
-              r = runtimes[-1]
-              print([d for d in r["supportedDeviceTypes"] if num(d["name"]) > 0][-1]["identifier"], r["identifier"])
+          def pick(want):
+              for r in reversed(runtimes):
+                  supported = [d for d in r.get("supportedDeviceTypes", []) if d["identifier"] in types]
+                  found = sorted((d for d in supported if want(d)), key=lambda d: num(d["name"]))
+                  if found:
+                      d = found[-1]
+                      print(f"picked {d['name']} {screen(d['identifier'])} on {r['identifier']} ({types[d['identifier']].get('bundlePath')})", file=sys.stderr)
+                      return d["identifier"], r["identifier"]
+          print(*(pick(lambda d: num(d["name"]) > 0 and screen(d["identifier"]) == (1206, 2622))
+                  or pick(lambda d: screen(d["identifier"]) == (1206, 2622))
+                  or pick(lambda d: num(d["name"]) > 0)))
           PY
           )
           echo "::notice::device type $type, runtime $runtime"
