@@ -203,6 +203,11 @@ struct SettingsView: View {
     @AppStorage("mnYUV444") private var yuv444 = false
     @AppStorage("mnFullColorRange") private var fullColorRange = false
     @AppStorage("mnStatsDetailed") private var statsDetailed = true
+    // Unset until chosen: then the old on/off pacing setting decides (on = Balanced)
+    @AppStorage("mnFramePacingMode") private var framePacingMode: Int?
+    @AppStorage("mnFrameQueueDepth") private var frameQueueDepth = 2
+    @AppStorage("mnVideoRenderer") private var videoRenderer = 0
+    @AppStorage("mnFrameInterpolation") private var frameInterpolation = false
     @AppStorage(MNAudio.volumeKey) private var streamVolume = 1.0
     @AppStorage(MNAudio.mixKey) private var mixWithOthers = false
     @AppStorage(MNAudio.muteInBackgroundKey) private var muteInBackground = false
@@ -249,9 +254,19 @@ struct SettingsView: View {
                     }
                     Toggle("Full color range", isOn: $fullColorRange)
                     choice("Frame pacing") {
-                        Picker("Frame pacing", selection: $store.useFramePacing) {
-                            Text("Lowest latency").tag(false)
-                            Text("Smoothest video").tag(true)
+                        Picker("Frame pacing", selection: Binding(
+                            get: { framePacingMode ?? (store.useFramePacing ? 1 : 0) },
+                            set: { framePacingMode = $0; store.useFramePacing = $0 != 0 })) {
+                            Text("Lowest latency").tag(0)
+                            Text("Balanced").tag(1)
+                            Text("Smoothest").tag(2)
+                        }
+                    }
+                    if framePacingMode == 2 {
+                        choice("Frames queued") {
+                            Picker("Frames queued", selection: $frameQueueDepth) {
+                                ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
+                            }
                         }
                     }
                 } header: {
@@ -262,6 +277,28 @@ struct SettingsView: View {
                             Text("Video, sound channels and resolution apply the next time you connect. Controls, gyro, haptics, volume and trackpad speed apply now.")
                         }
                         Text("Full color (4:4:4) keeps desktop text sharp. It uses HEVC, and the PC's GPU encoder must support HEVC 4:4:4; if it doesn't, the stream quietly stays at normal color. Full color range sends 0–255 levels for deeper blacks; turn it off if blacks look crushed. Over 150 Mb/s needs a fast, close Wi-Fi 6 or wired PC.")
+                    }
+                }
+
+                Section {
+                    choice("Renderer") {
+                        Picker("Renderer", selection: $videoRenderer) {
+                            Text("System").tag(0)
+                            Text("VideoToolbox").tag(1)
+                        }
+                    }
+                    if videoRenderer == 1 && MNFrameInterpolator.isSupported {
+                        Toggle("Frame interpolation (x2)", isOn: $frameInterpolation)
+                    }
+                } header: {
+                    Theme.label("Decoder")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Lowest latency shows every frame as soon as it arrives. Balanced holds one frame back when frames bunch up. Smoothest shows one frame per screen refresh from a queue: each queued frame adds a frame of latency and rides out a Wi-Fi hiccup.")
+                        Text("System lets iOS decode inside the video layer. VideoToolbox decodes the frames itself and shows the decode time in the stats. It's new, so switch back to System if the picture breaks up.\(inStream ? " Applies the next time you connect." : "")")
+                        if videoRenderer == 1 && MNFrameInterpolator.isSupported {
+                            Text("Frame interpolation draws a frame between every two, so a 60 fps stream plays at 120 fps on this screen. It uses more battery and adds about half a frame of latency (8 ms at 60 fps), and only works when the stream's frame rate is at most half the screen's refresh rate.")
+                        }
                     }
                 }
 

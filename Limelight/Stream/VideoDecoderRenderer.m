@@ -11,6 +11,10 @@
 #if !TARGET_OS_TV
 #import "Moonlight-Swift.h"
 #endif
+#include "FramePacer.h"
+
+@import VideoToolbox;
+#include <os/lock.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavcodec/cbs.h>
@@ -37,8 +41,37 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     CMVideoFormatDescriptionRef formatDesc;
     
     CADisplayLink* _displayLink;
-    BOOL framePacing;
+    int _tickRate; // display refreshes per second we ask for: the frame rate, doubled when interpolating
+    NSInteger _maxRefreshRate;
+
+    // Settings › Video, read when the stream starts
+    int _pacingMode;
+    int _queueDepth;
+    BOOL _videoToolbox;
+    BOOL _interpolating;
+    MNFramePacer _receivedPacer; // frames waiting in moonlight-common-c's queue
+    MNFramePacer _decodedPacer;  // frames VideoToolbox decoded (and interpolated), waiting to be shown
+
+    // VideoToolbox renderer: decodes to pixel buffers, which go to the same display layer as
+    // uncompressed sample buffers, so picture in picture and the external display keep working
+    VTDecompressionSessionRef _vtSession;
+    CMVideoFormatDescriptionRef _imageFormatDesc; // only touched on VideoToolbox's output thread
+    OSStatus _decodeStatus;
+    NSMutableArray* _decoded; // CMSampleBuffers, guarded by @synchronized(_decoded)
+#if !TARGET_OS_TV
+    MNFrameInterpolator* _interpolator;
+#endif
+
+    // Stats: decode time and interpolated frames, in one-second windows
+    os_unfair_lock _statsLock;
+    CFTimeInterval _statsWindowStart;
+    double _decodeSumMs, _decodeMaxMs, _lastDecodeAvgMs, _lastDecodeMaxMs;
+    int _decodeCount, _drawnCount, _lastDecodeCount, _lastDrawnCount;
 }
+
+#define MN_PACING_LOWEST 0
+#define MN_PACING_BALANCED 1
+#define MN_PACING_SMOOTHEST 2
 
 - (void)reinitializeDisplayLayer
 {
@@ -98,7 +131,18 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     _view = view;
     _callbacks = callbacks;
     _streamAspectRatio = aspectRatio;
-    framePacing = useFramePacing;
+
+    // Set on iOS by Settings › Video; tvOS keeps the system decoder and its on/off pacing
+    NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+    NSNumber* pacing = [defaults objectForKey:@"mnFramePacingMode"];
+    _pacingMode = pacing != nil ? pacing.intValue : (useFramePacing ? MN_PACING_BALANCED : MN_PACING_LOWEST);
+    _queueDepth = MAX(1, MIN(4, (int)[defaults integerForKey:@"mnFrameQueueDepth"] ?: 2));
+    _videoToolbox = [defaults integerForKey:@"mnVideoRenderer"] == 1;
+    if (_videoToolbox) {
+        _decoded = [[NSMutableArray alloc] init];
+    }
+    _statsLock = OS_UNFAIR_LOCK_INIT;
+    _maxRefreshRate = [UIScreen mainScreen].maximumFramesPerSecond; // init runs on the main thread; start doesn't
     
     parameterSetBuffers = [[NSMutableArray alloc] init];
     
@@ -115,12 +159,38 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
 
 - (void)start
 {
-    _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkCallback:)];
-    if (@available(iOS 15.0, tvOS 15.0, *)) {
-        _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(self->frameRate, self->frameRate, self->frameRate);
+#if !TARGET_OS_TV
+    // x2 interpolation needs the VideoToolbox renderer and a screen fast enough for twice the frame rate
+    if (_videoToolbox && [[NSUserDefaults standardUserDefaults] boolForKey:@"mnFrameInterpolation"]
+        && frameRate * 2 <= _maxRefreshRate && MNFrameInterpolator.isSupported) {
+        __weak VideoDecoderRenderer* weakSelf = self;
+        _interpolator = [[MNFrameInterpolator alloc] initWithOutput:^(CMSampleBufferRef frame, BOOL drawn) {
+            [weakSelf queueDecodedFrame:frame drawn:drawn];
+        }];
+        _interpolating = YES;
+    }
+#endif
+    _tickRate = _interpolating ? frameRate * 2 : frameRate;
+
+    int hold = _pacingMode == MN_PACING_SMOOTHEST ? _queueDepth : _pacingMode == MN_PACING_BALANCED ? 1 : 0;
+    BOOL steady = _pacingMode == MN_PACING_SMOOTHEST;
+    if (_interpolating) {
+        // Decode on arrival, then show one decoded or drawn frame per 120 Hz refresh. The buffer
+        // is counted in refreshes, two per stream frame, and always keeps at least one.
+        _receivedPacer = (MNFramePacer){0, false, false};
+        _decodedPacer = (MNFramePacer){MAX(1, hold * 2), true, true};
     }
     else {
-        _displayLink.preferredFramesPerSecond = self->frameRate;
+        _receivedPacer = (MNFramePacer){hold, steady, steady};
+        _decodedPacer = (MNFramePacer){0, false, false};
+    }
+
+    _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkCallback:)];
+    if (@available(iOS 15.0, tvOS 15.0, *)) {
+        _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(_tickRate, _tickRate, _tickRate);
+    }
+    else {
+        _displayLink.preferredFramesPerSecond = _tickRate;
     }
     [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
 
@@ -137,32 +207,28 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
 
 - (void)displayLinkCallback:(CADisplayLink *)sender
 {
-    [self pollFramesPaced:framePacing];
+    [self pollFramesPaced:YES];
 }
 
 - (void)pollFramesPaced:(BOOL)paced
 {
+    if (paced) {
+        // Only pace frames if the display refresh rate is >= 90% of the rate we asked for.
+        // Battery saver, accessibility settings, or device thermals can cause the actual
+        // refresh rate of the display to drop below the physical maximum.
+        double displayRefreshRate = 1 / (_displayLink.targetTimestamp - _displayLink.timestamp);
+        paced = displayRefreshRate >= _tickRate * 0.9f;
+    }
+
     VIDEO_FRAME_HANDLE handle;
     PDECODE_UNIT du;
-    
-    while (LiPollNextVideoFrame(&handle, &du)) {
+    int count = paced ? MNFramePacerRelease(&_receivedPacer, LiGetPendingVideoFrames()) : INT_MAX;
+    while (count-- > 0 && LiPollNextVideoFrame(&handle, &du)) {
         LiCompleteVideoFrame(handle, DrSubmitDecodeUnit(du));
-        
-        if (paced) {
-            // Calculate the actual display refresh rate
-            double displayRefreshRate = 1 / (_displayLink.targetTimestamp - _displayLink.timestamp);
-            
-            // Only pace frames if the display refresh rate is >= 90% of our stream frame rate.
-            // Battery saver, accessibility settings, or device thermals can cause the actual
-            // refresh rate of the display to drop below the physical maximum.
-            if (displayRefreshRate >= frameRate * 0.9f) {
-                // Keep one pending frame to smooth out gaps due to
-                // network jitter at the cost of 1 frame of latency
-                if (LiGetPendingVideoFrames() == 1) {
-                    break;
-                }
-            }
-        }
+    }
+
+    if (_decoded != nil) {
+        [self showDecodedFramesPaced:paced];
     }
 }
 
@@ -172,6 +238,242 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
 #if !TARGET_OS_TV
     [MNPictureInPicture.shared detach];
 #endif
+    // Decoding happens on the main thread, so the decoder is torn down there too
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self destroyDecompressionSession];
+#if !TARGET_OS_TV
+        [self->_interpolator stop];
+#endif
+    });
+}
+
+- (void)dealloc
+{
+    [self destroyDecompressionSession];
+    if (_imageFormatDesc != NULL) {
+        CFRelease(_imageFormatDesc);
+    }
+    if (formatDesc != NULL) {
+        CFRelease(formatDesc);
+    }
+}
+
+#pragma mark - VideoToolbox renderer
+// Adapted from VoidLink (GPLv3), Stream/VideoDecoderRenderer.m (VTDecompressionSession path)
+
+- (void)destroyDecompressionSession
+{
+    if (_vtSession != NULL) {
+        VTDecompressionSessionWaitForAsynchronousFrames(_vtSession);
+        VTDecompressionSessionInvalidate(_vtSession);
+        CFRelease(_vtSession);
+        _vtSession = NULL;
+    }
+}
+
+- (BOOL)createDecompressionSession
+{
+    [self destroyDecompressionSession];
+
+    // No pixel format requested: the decoder's own format (8 or 10 bit, 4:2:0 or 4:4:4, the
+    // stream's range) needs no conversion, and the display layer shows any of them
+    NSDictionary* attributes = @{ (id)kCVPixelBufferIOSurfacePropertiesKey: @{} };
+    OSStatus status = VTDecompressionSessionCreate(kCFAllocatorDefault, formatDesc, NULL,
+                                                   (__bridge CFDictionaryRef)attributes, NULL, &_vtSession);
+    if (status != noErr) {
+        Log(LOG_E, @"VTDecompressionSessionCreate failed: %d", (int)status);
+        _vtSession = NULL;
+        return NO;
+    }
+    VTSessionSetProperty(_vtSession, kVTDecompressionPropertyKey_RealTime, kCFBooleanTrue);
+    return YES;
+}
+
+// Decodes on the calling (main) thread and waits, so the frame is ready before this returns
+- (int)decodeSampleBuffer:(CMSampleBufferRef)sampleBuffer frameType:(int)frameType
+{
+    BOOL idr = frameType == FRAME_TYPE_IDR;
+    if (idr) {
+        // A new format description comes with every IDR frame (HDR on/off, resolution)
+        if (![self createDecompressionSession]) {
+            return DR_NEED_IDR;
+        }
+    }
+    else if (_vtSession == NULL) {
+        // A new decoder has to start at an IDR frame
+        return DR_NEED_IDR;
+    }
+
+    // HDR metadata as it was for this frame, attached to the decoded image
+    NSData* mdcv = masteringDisplayColorVolume;
+    NSData* cll = contentLightLevelInfo;
+    CFTimeInterval start = CACurrentMediaTime();
+    _decodeStatus = noErr;
+    OSStatus status = VTDecompressionSessionDecodeFrameWithOutputHandler(_vtSession, sampleBuffer, 0, NULL,
+        ^(OSStatus outStatus, VTDecodeInfoFlags infoFlags, CVImageBufferRef imageBuffer, CMTime pts, CMTime duration) {
+            if (outStatus != noErr) {
+                self->_decodeStatus = outStatus;
+            }
+            else if (imageBuffer != NULL) {
+                [self decodedImage:imageBuffer pts:pts decodeMs:(CACurrentMediaTime() - start) * 1000
+                           restart:idr mdcv:mdcv cll:cll];
+            }
+        });
+    if (status == noErr) {
+        VTDecompressionSessionWaitForAsynchronousFrames(_vtSession);
+        status = _decodeStatus;
+    }
+    if (status != noErr) {
+        Log(LOG_E, @"VideoToolbox decode failed: %d", (int)status);
+        if (status == kVTInvalidSessionErr) {
+            // iOS dropped the decoder (usually while in the background); a new one starts at the next IDR frame
+            [self destroyDecompressionSession];
+        }
+        return DR_NEED_IDR;
+    }
+    return DR_OK;
+}
+
+// On VideoToolbox's output thread
+- (void)decodedImage:(CVImageBufferRef)image pts:(CMTime)pts decodeMs:(double)decodeMs
+             restart:(BOOL)restart mdcv:(NSData*)mdcv cll:(NSData*)cll
+{
+    os_unfair_lock_lock(&_statsLock);
+    [self rollStatsWindow];
+    _decodeSumMs += decodeMs;
+    _decodeMaxMs = MAX(_decodeMaxMs, decodeMs);
+    _decodeCount++;
+    os_unfair_lock_unlock(&_statsLock);
+
+    // The decoder tags color primaries, transfer and matrix; HDR10 mastering metadata is added here
+    if (mdcv != nil) {
+        CVBufferSetAttachment(image, kCVImageBufferMasteringDisplayColorVolumeKey, (__bridge CFDataRef)mdcv, kCVAttachmentMode_ShouldPropagate);
+    }
+    if (cll != nil) {
+        CVBufferSetAttachment(image, kCVImageBufferContentLightLevelInfoKey, (__bridge CFDataRef)cll, kCVAttachmentMode_ShouldPropagate);
+    }
+
+    if (_imageFormatDesc == NULL || !CMVideoFormatDescriptionMatchesImageBuffer(_imageFormatDesc, image)) {
+        if (_imageFormatDesc != NULL) {
+            CFRelease(_imageFormatDesc);
+            _imageFormatDesc = NULL;
+        }
+        if (CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, image, &_imageFormatDesc) != noErr) {
+            _imageFormatDesc = NULL;
+            return;
+        }
+    }
+
+    CMSampleTimingInfo timing = {kCMTimeInvalid, pts, kCMTimeInvalid};
+    CMSampleBufferRef frame;
+    if (CMSampleBufferCreateReadyWithImageBuffer(kCFAllocatorDefault, image, _imageFormatDesc, &timing, &frame) != noErr) {
+        return;
+    }
+#if !TARGET_OS_TV
+    if (_interpolator != nil) {
+        [_interpolator submit:frame restart:restart];
+        CFRelease(frame);
+        return;
+    }
+#endif
+    [self queueDecodedFrame:frame drawn:NO];
+    CFRelease(frame);
+}
+
+- (void)queueDecodedFrame:(CMSampleBufferRef)frame drawn:(BOOL)drawn
+{
+    if (drawn) {
+        os_unfair_lock_lock(&_statsLock);
+        [self rollStatsWindow];
+        _drawnCount++;
+        os_unfair_lock_unlock(&_statsLock);
+    }
+    @synchronized (_decoded) {
+        [_decoded addObject:(__bridge id)frame];
+        // Nothing is showing them (the display link stopped): keep only the newest
+        while (_decoded.count > 8) {
+            [_decoded removeObjectAtIndex:0];
+        }
+    }
+}
+
+- (void)showDecodedFramesPaced:(BOOL)paced
+{
+    id frame;
+    @synchronized (_decoded) {
+        int count = (int)_decoded.count;
+        if (paced) {
+            count = MNFramePacerRelease(&_decodedPacer, count);
+        }
+        if (count <= 0) {
+            return;
+        }
+        // Frames released together would land in the same refresh; only the newest would be seen
+        frame = _decoded[count - 1];
+        [_decoded removeObjectsInRange:NSMakeRange(0, count)];
+    }
+    [displayLayer enqueueSampleBuffer:(__bridge CMSampleBufferRef)frame];
+    if (displayLayer.hidden) {
+        // The first frame after a new layer is always an IDR frame
+        displayLayer.hidden = NO;
+        [_callbacks videoContentShown];
+    }
+}
+
+// Call with _statsLock held
+- (void)rollStatsWindow
+{
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - _statsWindowStart < 1.0) {
+        return;
+    }
+    _lastDecodeAvgMs = _decodeCount > 0 ? _decodeSumMs / _decodeCount : 0;
+    _lastDecodeMaxMs = _decodeMaxMs;
+    _lastDecodeCount = _decodeCount;
+    _lastDrawnCount = _drawnCount;
+    _decodeSumMs = _decodeMaxMs = 0;
+    _decodeCount = _drawnCount = 0;
+    _statsWindowStart = now;
+}
+
+- (BOOL)getDecodeTime:(double*)averageMs max:(double*)maxMs
+{
+    os_unfair_lock_lock(&_statsLock);
+    *averageMs = _lastDecodeAvgMs;
+    *maxMs = _lastDecodeMaxMs;
+    BOOL have = _lastDecodeCount > 0;
+    os_unfair_lock_unlock(&_statsLock);
+    return _videoToolbox && have;
+}
+
+- (NSString*)statsDescription
+{
+    NSMutableString* text = [NSMutableString stringWithString:_videoToolbox ? @"VideoToolbox" : @"System decoder"];
+    switch (_pacingMode) {
+        case MN_PACING_SMOOTHEST:
+            [text appendFormat:@", smoothest pacing (%d-frame queue)", _queueDepth];
+            break;
+        case MN_PACING_BALANCED:
+            [text appendString:@", balanced pacing"];
+            break;
+        default:
+            [text appendString:@", lowest latency"];
+            break;
+    }
+    if (_interpolating) {
+        os_unfair_lock_lock(&_statsLock);
+        int drawn = _lastDrawnCount;
+        os_unfair_lock_unlock(&_statsLock);
+        [text appendFormat:@", x2 interpolation (%d drawn frames/s)", drawn];
+    }
+    int buffered = LiGetPendingVideoFrames();
+    if (_decoded != nil) {
+        @synchronized (_decoded) {
+            buffered += (int)_decoded.count;
+        }
+    }
+    [text appendFormat:@" · %d frame(s) buffered", buffered];
+    return text;
 }
 
 #define NALU_START_PREFIX_SIZE 3
@@ -623,15 +925,21 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
         return DR_NEED_IDR;
     }
 
-    // Enqueue the next frame
-    [self->displayLayer enqueueSampleBuffer:sampleBuffer];
-    
-    if (du->frameType == FRAME_TYPE_IDR) {
-        // Ensure the layer is visible now
-        self->displayLayer.hidden = NO;
-        
-        // Tell our parent VC to hide the progress indicator
-        [self->_callbacks videoContentShown];
+    int result = DR_OK;
+    if (_videoToolbox) {
+        result = [self decodeSampleBuffer:sampleBuffer frameType:du->frameType];
+    }
+    else {
+        // Enqueue the next frame
+        [self->displayLayer enqueueSampleBuffer:sampleBuffer];
+
+        if (du->frameType == FRAME_TYPE_IDR) {
+            // Ensure the layer is visible now
+            self->displayLayer.hidden = NO;
+
+            // Tell our parent VC to hide the progress indicator
+            [self->_callbacks videoContentShown];
+        }
     }
     
     // Dereference the buffers
@@ -639,7 +947,7 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
     CFRelease(frameBlockBuffer);
     CFRelease(sampleBuffer);
     
-    return DR_OK;
+    return result;
 }
 
 - (void)setHdrMode:(BOOL)enabled {
