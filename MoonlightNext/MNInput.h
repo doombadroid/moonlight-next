@@ -38,6 +38,8 @@ typedef NS_ENUM(int, MNMouseButton) {
 + (void) mouseButton:(MNMouseButton)button down:(BOOL)down;
 // One notch is 120, positive scrolls up.
 + (void) scroll:(short)amount;
+// Horizontal, same units; positive scrolls right.
++ (void) hscroll:(short)amount;
 
 // Button flags as in Limelight.h (A_FLAG = 0x1000 ...), merged into the on-screen controller.
 + (void) gamepadButton:(int)flag down:(BOOL)down;

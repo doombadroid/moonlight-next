@@ -16,6 +16,12 @@
 - (void) userInteractionBegan;
 - (void) userInteractionEnded;
 
+#if !TARGET_OS_TV
+@optional
+// Ctrl+Alt+Shift + a letter on a hardware keyboard; usage is the letter's UIKeyboardHIDUsage
+- (void) streamHotkeyPressed:(NSInteger)usage;
+#endif
+
 @end
 
 #if TARGET_OS_TV
@@ -38,6 +44,15 @@
 - (void) reloadOnScreenControlsLevel;
 // The on-screen controls when they're showing (for the layout editor), else nil.
 - (OnScreenControls*) visibleOnScreenControls;
+
+// Touches on the stream do nothing (the Off touch mode, or the stream menu's toggle).
+// On-screen controls keep working.
+@property (nonatomic) BOOL touchInputDisabled;
+// The soft keyboard is up, opened by a finger tap whose lowest finger was at this y
+- (BOOL) softKeyboardShown;
+- (CGFloat) softKeyboardAnchorY;
+// Re-reads the mouse pointer style (MNMouse.cursorVisible changed)
+- (void) refreshPointerStyle;
 #endif
 
 @end

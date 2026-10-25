@@ -49,6 +49,14 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     BOOL hasUserInteracted;
     
     NSDictionary<NSString *, NSNumber *> *dictCodes;
+
+#if !TARGET_OS_TV
+    MNTouchMode touchMode;
+    // Native touch: host pointer id (0-10) for each finger on the screen
+    NSMutableDictionary<NSValue*, NSNumber*>* nativeTouchIds;
+    CGFloat softKeyboardAnchorY;
+    UIPointerInteraction* pointerInteraction;
+#endif
 }
 
 - (void) setupStreamView:(ControllerSupport*)controllerSupport
@@ -72,10 +80,16 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     self->touchHandler = [[RelativeTouchHandler alloc] initWithView:self];
 #else
     // iOS uses RelativeTouchHandler or AbsoluteTouchHandler depending on user preference
-    if (settings.absoluteTouchMode) {
+    touchMode = [MNTouchPrefs touchModeWithAbsolute:settings.absoluteTouchMode];
+    self.touchInputDisabled = touchMode == MNTouchModeDisabled;
+    nativeTouchIds = [[NSMutableDictionary alloc] init];
+    [MNMouse reset];
+    if (touchMode == MNTouchModeTouchscreen || touchMode == MNTouchModeNative) {
+        // Native touch falls back to this when the host can't take touch events
         self->touchHandler = [[AbsoluteTouchHandler alloc] initWithView:self];
     }
     else {
+        // Also what the Off mode uses once touch is turned back on from the stream menu
         self->touchHandler = [[RelativeTouchHandler alloc] initWithView:self];
     }
     
@@ -99,7 +113,8 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     // mice correctly, but UIKit does. We will register for both and ignore UIKit
     // events if a GCMouse is connected.
     if (@available(iOS 13.4, *)) {
-        [self addInteraction:[[UIPointerInteraction alloc] initWithDelegate:self]];
+        pointerInteraction = [[UIPointerInteraction alloc] initWithDelegate:self];
+        [self addInteraction:pointerInteraction];
         
         UIPanGestureRecognizer *discreteMouseWheelRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(mouseWheelMovedDiscrete:)];
         discreteMouseWheelRecognizer.maximumNumberOfTouches = 0;
@@ -387,6 +402,95 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 
 #endif
 
+#if !TARGET_OS_TV
+// Native touch: each finger goes to the host as its own touch point, with pressure where the
+// screen reports it. NO when that mode is off or the host can't take touch events (macOS
+// Sunshine, older hosts); the touchscreen handler takes the touches instead.
+- (BOOL)sendNativeTouches:(NSSet*)touches type:(uint8_t)type {
+    if (touchMode != MNTouchModeNative || !(LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS)) {
+        return NO;
+    }
+    CGSize videoSize = [self getVideoAreaSize];
+    for (UITouch* touch in touches) {
+        NSValue* key = [NSValue valueWithNonretainedObject:touch];
+        NSNumber* pointerId = nativeTouchIds[key];
+        if (type == LI_TOUCH_EVENT_DOWN) {
+            // The lowest free id; hosts take up to 11 fingers
+            NSArray<NSNumber*>* used = [nativeTouchIds allValues];
+            uint32_t next = 0;
+            while ([used containsObject:@(next)]) {
+                next++;
+            }
+            if (next > 10) {
+                continue;
+            }
+            pointerId = @(next);
+            nativeTouchIds[key] = pointerId;
+        }
+        else if (pointerId == nil) {
+            continue;
+        }
+
+        CGPoint location = [self adjustCoordinatesForVideoArea:[touch locationInView:self]];
+        // 0 means the pressure is unknown (screens without force sensing)
+        float pressure = touch.maximumPossibleForce > 0 ? touch.force / touch.maximumPossibleForce : 0.0f;
+        LiSendTouchEvent(type, pointerId.unsignedIntValue,
+                         location.x / videoSize.width, location.y / videoSize.height,
+                         pressure, 0.0f, 0.0f, LI_ROT_UNKNOWN);
+        if (type == LI_TOUCH_EVENT_UP || type == LI_TOUCH_EVENT_CANCEL) {
+            [nativeTouchIds removeObjectForKey:key];
+        }
+    }
+    return YES;
+}
+
+- (BOOL)softKeyboardShown {
+    return isInputingText;
+}
+
+- (CGFloat)softKeyboardAnchorY {
+    return softKeyboardAnchorY;
+}
+
+// Ctrl+Alt+Shift + D, Q, S, O, M or C: handled here instead of going to the host
+- (BOOL)handleStreamHotkey:(UIPress*)press API_AVAILABLE(ios(13.4)) {
+    UIKey* key = press.key;
+    UIKeyModifierFlags wanted = UIKeyModifierControl | UIKeyModifierAlternate | UIKeyModifierShift;
+    if (key == nil || (key.modifierFlags & (wanted | UIKeyModifierCommand)) != wanted) {
+        return NO;
+    }
+    switch (key.keyCode) {
+        case UIKeyboardHIDUsageKeyboardD:
+        case UIKeyboardHIDUsageKeyboardQ:
+        case UIKeyboardHIDUsageKeyboardS:
+        case UIKeyboardHIDUsageKeyboardO:
+        case UIKeyboardHIDUsageKeyboardM:
+        case UIKeyboardHIDUsageKeyboardC:
+            break;
+        default:
+            return NO;
+    }
+    if ([interactionDelegate respondsToSelector:@selector(streamHotkeyPressed:)]) {
+        [interactionDelegate streamHotkeyPressed:key.keyCode];
+    }
+    return YES;
+}
+
+- (void)refreshPointerStyle {
+    if (@available(iOS 13.4, *)) {
+        [pointerInteraction invalidate];
+    }
+}
+
+// A physical mouse goes through GCMouse while captured, and through UIKit's pointer otherwise
+- (BOOL)mouseHandledByGCMouse {
+    if (@available(iOS 14.0, *)) {
+        return [GCMouse current] != nil && MNMouse.captured;
+    }
+    return NO;
+}
+#endif
+
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
     if ([self handleMouseButtonEvent:BUTTON_ACTION_PRESS
                           forTouches:touches
@@ -413,20 +517,41 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 #endif
     
     if (![onScreenControls handleTouchDownEvent:touches]) {
+#if !TARGET_OS_TV
+        if (self.touchInputDisabled) {
+            return;
+        }
+        BOOL sentNative = [self sendNativeTouches:touches type:LI_TOUCH_EVENT_DOWN];
+        NSUInteger keyboardFingers = MNTouchPrefs.keyboardFingers;
+#else
+        BOOL sentNative = NO;
+        NSUInteger keyboardFingers = 3;
+#endif
         // We still inform the touch handler even if we're going trigger the
         // keyboard activation gesture. This is important to ensure the touch
         // handler has a consistent view of touch events to correctly suppress
         // activation of one or two finger gestures when a three finger gesture
         // is triggered.
-        [touchHandler touchesBegan:touches withEvent:event];
+        if (!sentNative) {
+            [touchHandler touchesBegan:touches withEvent:event];
+        }
         
-        if ([[event allTouches] count] == 3) {
+        if (keyboardFingers > 0 && [[event allTouches] count] == keyboardFingers) {
             if (isInputingText) {
                 Log(LOG_D, @"Closing the keyboard");
                 [keyInputField resignFirstResponder];
                 isInputingText = false;
             } else {
                 Log(LOG_D, @"Opening the keyboard");
+#if !TARGET_OS_TV
+                // The stream is lifted to keep this spot above the keyboard
+                softKeyboardAnchorY = 0;
+                for (UITouch* touch in [event allTouches]) {
+                    softKeyboardAnchorY = MAX(softKeyboardAnchorY, [touch locationInView:self].y);
+                }
+                // Set before the keyboard comes up: its will-show notification reads it
+                isInputingText = true;
+#endif
                 // Prepare the textbox used to capture keyboard events.
                 keyInputField.delegate = self;
                 keyInputField.text = @"0";
@@ -521,11 +646,9 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     if (@available(iOS 13.4, *)) {
         UITouch* touch = [touches anyObject];
         if (touch.type == UITouchTypeIndirectPointer) {
-            if (@available(iOS 14.0, *)) {
-                if ([GCMouse current] != nil) {
-                    // We'll handle this with GCMouse. Do nothing here.
-                    return YES;
-                }
+            if ([self mouseHandledByGCMouse]) {
+                // We'll handle this with GCMouse. Do nothing here.
+                return YES;
             }
             
             UIEventButtonMask normalizedButtonMask;
@@ -590,11 +713,9 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
         
         UITouch *touch = [touches anyObject];
         if (touch.type == UITouchTypeIndirectPointer) {
-            if (@available(iOS 14.0, *)) {
-                if ([GCMouse current] != nil) {
-                    // We'll handle this with GCMouse. Do nothing here.
-                    return;
-                }
+            if ([self mouseHandledByGCMouse]) {
+                // We'll handle this with GCMouse. Do nothing here.
+                return;
             }
             
             // We must handle this event to properly support
@@ -612,6 +733,11 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     hasUserInteracted = YES;
     
     if (![onScreenControls handleTouchMovedEvent:touches]) {
+#if !TARGET_OS_TV
+        if (self.touchInputDisabled || [self sendNativeTouches:touches type:LI_TOUCH_EVENT_MOVE]) {
+            return;
+        }
+#endif
         [touchHandler touchesMoved:touches withEvent:event];
     }
 }
@@ -621,6 +747,12 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     
     if (@available(iOS 13.4, tvOS 13.4, *)) {
         for (UIPress* press in presses) {
+#if !TARGET_OS_TV
+            if ([self handleStreamHotkey:press]) {
+                handled = YES;
+                continue;
+            }
+#endif
             // For now, we'll treated it as handled if we handle at least one of the
             // UIPress events inside the set.
             if ([KeyboardSupport sendKeyEventForPress:press down:YES]) {
@@ -679,6 +811,12 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 #endif
     
     if (![onScreenControls handleTouchUpEvent:touches]) {
+#if !TARGET_OS_TV
+        // Lifts still go through while touch is off, so nothing stays held down
+        if ([self sendNativeTouches:touches type:LI_TOUCH_EVENT_UP]) {
+            return;
+        }
+#endif
         [touchHandler touchesEnded:touches withEvent:event];
     }
 }
@@ -686,7 +824,14 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 - (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event {
     // Release any on-screen button a cancelled touch was holding
     [onScreenControls handleTouchUpEvent:touches];
-    [touchHandler touchesCancelled:touches withEvent:event];
+#if !TARGET_OS_TV
+    BOOL sentNative = [self sendNativeTouches:touches type:LI_TOUCH_EVENT_CANCEL];
+#else
+    BOOL sentNative = NO;
+#endif
+    if (!sentNative) {
+        [touchHandler touchesCancelled:touches withEvent:event];
+    }
     [self handleMouseButtonEvent:BUTTON_ACTION_RELEASE
                       forTouches:touches
                        withEvent:event];
@@ -728,11 +873,9 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 - (UIPointerRegion *)pointerInteraction:(UIPointerInteraction *)interaction
                        regionForRequest:(UIPointerRegionRequest *)request
                           defaultRegion:(UIPointerRegion *)defaultRegion API_AVAILABLE(ios(13.4)) {
-    if (@available(iOS 14.0, *)) {
-        if ([GCMouse current] != nil) {
-            // We'll handle this with GCMouse. Do nothing here.
-            return nil;
-        }
+    if ([self mouseHandledByGCMouse]) {
+        // We'll handle this with GCMouse. Do nothing here.
+        return nil;
     }
     
     // This logic mimics what iOS does with AVLayerVideoGravityResizeAspect
@@ -757,8 +900,13 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 }
 
 - (UIPointerStyle *)pointerInteraction:(UIPointerInteraction *)interaction styleForRegion:(UIPointerRegion *)region  API_AVAILABLE(ios(13.4)) {
-    // Always hide the mouse cursor over our stream view
-    return [UIPointerStyle hiddenPointerStyle];
+    // Hide the mouse cursor over our stream view unless it was asked for (Settings or Ctrl+Alt+Shift+C)
+    return MNMouse.cursorVisible ? [UIPointerStyle systemPointerStyle] : [UIPointerStyle hiddenPointerStyle];
+}
+
+// -1 when Settings asks for the mouse wheel reversed
+- (int)wheelDirection {
+    return MNTouchPrefs.reverseScroll ? -1 : 1;
 }
 
 - (void)mouseWheelMovedContinuous:(UIPanGestureRecognizer *)gesture {
@@ -778,7 +926,7 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     const short translationMultiplier = 120 * 20; // WHEEL_DELTA * 20
     
     {
-        short translationDeltaY = ((currentScrollTranslation.y - lastScrollTranslation.y) / self.bounds.size.height) * translationMultiplier;
+        short translationDeltaY = ((currentScrollTranslation.y - lastScrollTranslation.y) / self.bounds.size.height) * translationMultiplier * [self wheelDirection];
         if (translationDeltaY != 0) {
             LiSendHighResScrollEvent(translationDeltaY);
             lastScrollTranslation = currentScrollTranslation;
@@ -786,7 +934,7 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     }
 
     {
-        short translationDeltaX = ((currentScrollTranslation.x - lastScrollTranslation.x) / self.bounds.size.width) * translationMultiplier;
+        short translationDeltaX = ((currentScrollTranslation.x - lastScrollTranslation.x) / self.bounds.size.width) * translationMultiplier * [self wheelDirection];
         if (translationDeltaX != 0) {
             // Direction is reversed from vertical scrolling
             LiSendHighResHScrollEvent(-translationDeltaX);
@@ -813,14 +961,14 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     CGPoint currentScrollTranslation = [gesture translationInView:self];
     
     {
-        short translationDeltaY = currentScrollTranslation.y - lastScrollTranslation.y;
+        short translationDeltaY = (currentScrollTranslation.y - lastScrollTranslation.y) * [self wheelDirection];
         if (translationDeltaY != 0) {
             LiSendScrollEvent(translationDeltaY > 0 ? 1 : -1);
         }
     }
 
     {
-        short translationDeltaX = currentScrollTranslation.x - lastScrollTranslation.x;
+        short translationDeltaX = (currentScrollTranslation.x - lastScrollTranslation.x) * [self wheelDirection];
         if (translationDeltaX != 0) {
             // Direction is reversed from vertical scrolling
             LiSendHScrollEvent(translationDeltaX < 0 ? 1 : -1);

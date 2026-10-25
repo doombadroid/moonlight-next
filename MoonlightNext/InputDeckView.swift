@@ -321,7 +321,7 @@ private struct TrackpadPanel: View {
                 .frame(width: 92)
             TrackpadSurface()
                 .overlay(alignment: .bottom) {
-                    Text("Trackpad · tap to click · two fingers to scroll")
+                    Text("Tap to click · tap, then hold to drag · two fingers scroll · pinch zooms")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.muted)
                         .padding(.bottom, 10)
@@ -368,72 +368,25 @@ private struct TrackpadSurface: UIViewRepresentable {
 }
 
 final class TrackpadUIView: UIView {
-    /// Host pixels per point of finger travel.
-    /// Settings › Input › Trackpad speed (host pixels per point of finger travel)
-    private var pointerSpeed: CGFloat { CGFloat(UserDefaults.standard.object(forKey: "mnTrackpadSpeed") as? Double ?? 2.0) }
-    /// High-res scroll units (120 = one notch) per point.
-    private let scrollSpeed: CGFloat = 4.0
-    private var remainder = CGPoint.zero
-    private var scrollRemainder: CGFloat = 0
+    /// Moves, clicks, drags, scrolls and pinches; shared with the full-screen touchpad mode
+    private lazy var pad: MNTouchpad = {
+        let pad = MNTouchpad(view: self, fullScreen: false)
+        pad.onClick = { Feedback.clickPress() }
+        return pad
+    }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
         isMultipleTouchEnabled = true
-
-        let movePan = UIPanGestureRecognizer(target: self, action: #selector(handleMove(_:)))
-        movePan.maximumNumberOfTouches = 1
-        let scrollPan = UIPanGestureRecognizer(target: self, action: #selector(handleScroll(_:)))
-        scrollPan.minimumNumberOfTouches = 2
-        scrollPan.maximumNumberOfTouches = 2
-        let oneTap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        let twoTap = UITapGestureRecognizer(target: self, action: #selector(handleTwoFingerTap(_:)))
-        twoTap.numberOfTouchesRequired = 2
-        oneTap.require(toFail: twoTap)
-        for recognizer in [movePan, scrollPan, oneTap, twoTap] {
-            addGestureRecognizer(recognizer)
-        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    @objc private func handleMove(_ pan: UIPanGestureRecognizer) {
-        let t = pan.translation(in: self)
-        pan.setTranslation(.zero, in: self)
-        let dx = t.x * pointerSpeed + remainder.x
-        let dy = t.y * pointerSpeed + remainder.y
-        let sx = dx.rounded(.towardZero), sy = dy.rounded(.towardZero)
-        remainder = CGPoint(x: dx - sx, y: dy - sy)
-        MNInput.mouseMoveX(Int16(clamping: Int(sx)), y: Int16(clamping: Int(sy)))
-        if pan.state == .ended || pan.state == .cancelled { remainder = .zero }
-    }
-
-    @objc private func handleScroll(_ pan: UIPanGestureRecognizer) {
-        let t = pan.translation(in: self)
-        pan.setTranslation(.zero, in: self)
-        // Fingers moving down scroll the content up, as on a Mac trackpad
-        let amount = t.y * scrollSpeed + scrollRemainder
-        let whole = amount.rounded(.towardZero)
-        scrollRemainder = amount - whole
-        MNInput.scroll(Int16(clamping: Int(whole)))
-        if pan.state == .ended || pan.state == .cancelled { scrollRemainder = 0 }
-    }
-
-    @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
-        click(.left)
-    }
-
-    @objc private func handleTwoFingerTap(_ recognizer: UITapGestureRecognizer) {
-        click(.right)
-    }
-
-    private func click(_ button: MNMouseButton) {
-        Feedback.clickPress()
-        MNInput.mouseButton(button, down: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            MNInput.mouseButton(button, down: false)
-        }
-    }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) { pad.touchesBegan(touches) }
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { pad.touchesMoved(touches) }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { pad.touchesEnded(touches) }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { pad.touchesCancelled(touches) }
 }
 
 // MARK: - Gamepad

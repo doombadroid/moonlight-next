@@ -10,6 +10,39 @@
 
 #include <Limelight.h>
 
+#if !TARGET_OS_TV
+
+// iOS: the touchpad engine shared with the input deck's trackpad (MoonlightNext/TouchInput.swift)
+@implementation RelativeTouchHandler {
+    MNTouchpad* touchpad;
+}
+
+- (id)initWithView:(StreamView*)view {
+    self = [self init];
+    touchpad = [[MNTouchpad alloc] initWithView:view fullScreen:YES];
+    return self;
+}
+
+- (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
+    [touchpad touchesBegan:touches];
+}
+
+- (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
+    [touchpad touchesMoved:touches];
+}
+
+- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
+    [touchpad touchesEnded:touches];
+}
+
+- (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event {
+    [touchpad touchesCancelled:touches];
+}
+
+@end
+
+#else
+
 static const int REFERENCE_WIDTH = 1280;
 static const int REFERENCE_HEIGHT = 720;
 
@@ -205,3 +238,5 @@ static const int REFERENCE_HEIGHT = 720;
 #endif
 
 @end
+
+#endif

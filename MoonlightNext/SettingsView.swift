@@ -169,6 +169,27 @@ struct SettingsView: View {
     @AppStorage("mnOSCPressHighlight") private var pressHighlight = true
     @AppStorage("mnTrackpadSpeed") private var trackpadSpeed = 2.0
     @AppStorage("mnPictureInPicture") private var pictureInPicture = true
+    @AppStorage(MNTouchPrefs.touchModeKey) private var touchMode = MNTouchMode.touchpad.rawValue
+    @AppStorage(MNTouchPrefs.pointerSpeedKey) private var touchpadPointerSpeed = 1.0
+    @AppStorage(MNTouchPrefs.scrollSpeedKey) private var scrollSpeed = 1.0
+    @AppStorage(MNTouchPrefs.momentumKey) private var scrollMomentum = true
+    @AppStorage(MNTouchPrefs.pinchZoomKey) private var pinchZoom = true
+    @AppStorage(MNTouchPrefs.reverseScrollKey) private var reverseScroll = false
+    @AppStorage(MNTouchPrefs.topDeadZoneKey) private var topDeadZone = true
+    @AppStorage(MNTouchPrefs.keyboardFingersKey) private var keyboardFingers = 3
+    @AppStorage(MNTouchPrefs.edgeSwipeKey) private var edgeSwipe = MNTouchPrefs.EdgeSwipe.disconnect.rawValue
+    @AppStorage(MNTouchPrefs.cursorModeKey) private var cursorMode = MNTouchPrefs.CursorMode.captured.rawValue
+
+    /// Touchscreen is the older absoluteTouchMode setting; the other modes live in mnTouchMode
+    private var touchModeSelection: Binding<Int> {
+        Binding(get: {
+            if store.absoluteTouchMode { return MNTouchMode.touchscreen.rawValue }
+            return touchMode == MNTouchMode.native.rawValue || touchMode == MNTouchMode.disabled.rawValue ? touchMode : MNTouchMode.touchpad.rawValue
+        }, set: {
+            store.absoluteTouchMode = $0 == MNTouchMode.touchscreen.rawValue
+            touchMode = $0
+        })
+    }
 
     var body: some View {
         NavigationStack {
@@ -224,9 +245,11 @@ struct SettingsView: View {
 
                 Section {
                     choice("Touch mode") {
-                        Picker("Touch mode", selection: $store.absoluteTouchMode) {
-                            Text("Touchpad").tag(false)
-                            Text("Touchscreen").tag(true)
+                        Picker("Touch mode", selection: touchModeSelection) {
+                            Text("Touchpad").tag(MNTouchMode.touchpad.rawValue)
+                            Text("Touchscreen").tag(MNTouchMode.touchscreen.rawValue)
+                            Text("Native").tag(MNTouchMode.native.rawValue)
+                            Text("Off").tag(MNTouchMode.disabled.rawValue)
                         }
                     }
                     choice("On-screen controls", note: store.absoluteTouchMode ? "Off in touchscreen mode" : nil) {
@@ -253,6 +276,45 @@ struct SettingsView: View {
                     }
                 } header: {
                     Theme.label("Input")
+                } footer: {
+                    Text(touchModeFooter)
+                }
+
+                Section {
+                    if touchModeSelection.wrappedValue == MNTouchMode.touchpad.rawValue {
+                        slider("Touchpad pointer speed", value: $touchpadPointerSpeed, in: 0.25...4, step: 0.25)
+                        Toggle("Ignore touches at the top edge", isOn: $topDeadZone)
+                    }
+                    slider("Scroll speed", value: $scrollSpeed, in: 0.25...4, step: 0.25)
+                    Toggle("Scroll momentum", isOn: $scrollMomentum)
+                    Toggle("Pinch to zoom", isOn: $pinchZoom)
+                    Toggle("Reverse scroll direction", isOn: $reverseScroll)
+                    choice("Keyboard tap") {
+                        Picker("Keyboard tap", selection: $keyboardFingers) {
+                            Text("3 fingers").tag(3)
+                            Text("4").tag(4)
+                            Text("5").tag(5)
+                            Text("Off").tag(0)
+                        }
+                    }
+                    choice("Left-edge swipe") {
+                        Picker("Left-edge swipe", selection: $edgeSwipe) {
+                            Text("Disconnect").tag(MNTouchPrefs.EdgeSwipe.disconnect.rawValue)
+                            Text("Stream menu").tag(MNTouchPrefs.EdgeSwipe.menu.rawValue)
+                            Text("Off").tag(MNTouchPrefs.EdgeSwipe.off.rawValue)
+                        }
+                    }
+                    choice("Mouse pointer") {
+                        Picker("Mouse pointer", selection: $cursorMode) {
+                            Text("Captured").tag(MNTouchPrefs.CursorMode.captured.rawValue)
+                            Text("Hidden").tag(MNTouchPrefs.CursorMode.hidden.rawValue)
+                            Text("Visible").tag(MNTouchPrefs.CursorMode.visible.rawValue)
+                        }
+                    }
+                } header: {
+                    Theme.label("Touchpad, keyboard and mouse")
+                } footer: {
+                    Text("Scrolling and pinch apply to the touchpad mode and the keyboard deck's trackpad: tap, then hold to drag; two fingers scroll; pinch sends Ctrl + wheel to zoom. The keyboard tap opens the on-screen keyboard. A captured mouse moves the host pointer relatively, for games; hidden or visible send the pointer's position, for the desktop. With a hardware keyboard, Ctrl+Alt+Shift with D disconnects, Q quits the app, S opens settings, O shows stats, M frees or captures the mouse and C shows or hides the pointer.\(inStream ? " The mouse pointer setting applies the next time you connect." : "")")
                 }
 
                 ControllerSettingsSections()
@@ -284,6 +346,34 @@ struct SettingsView: View {
         }
         .tint(Theme.accent)
         .preferredColorScheme(.dark)
+    }
+
+    private var touchModeFooter: String {
+        var text: String
+        switch MNTouchMode(rawValue: touchModeSelection.wrappedValue) {
+        case .native:
+            text = "Native sends every finger to the host as a real touch, for touch games and Windows touch gestures. It needs a Windows or Linux host (Sunshine on macOS has no touch input); elsewhere it works like Touchscreen."
+        case .disabled:
+            text = "Touches on the stream do nothing, so a palm can't click. On-screen controls and the ••• menu still work, and the menu can turn touch back on."
+        default:
+            text = "Touch can also be turned off for a moment from the ••• menu."
+        }
+        if inStream {
+            text += " Touch mode applies the next time you connect."
+        }
+        return text
+    }
+
+    /// A labelled slider row with its value as a multiplier.
+    private func slider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>, step: Double) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(String(format: "%.2g×", value.wrappedValue)).foregroundStyle(Theme.muted)
+            }
+            Slider(value: value, in: range, step: step)
+        }
     }
 
     /// A labelled segmented control row.

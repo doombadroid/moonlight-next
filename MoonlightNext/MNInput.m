@@ -40,6 +40,12 @@ static __weak ControllerSupport* sControllerSupport;
     }
 }
 
++ (void) hscroll:(short)amount {
+    if (amount != 0) {
+        LiSendHighResHScrollEvent(amount);
+    }
+}
+
 + (void) gamepadButton:(int)flag down:(BOOL)down {
     ControllerSupport* cs = sControllerSupport;
     Controller* controller = [cs getOscController];
