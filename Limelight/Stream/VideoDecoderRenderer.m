@@ -42,6 +42,7 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     
     CADisplayLink* _displayLink;
     int _tickRate; // display refreshes per second we ask for: the frame rate, doubled when interpolating
+    NSInteger _maxRefreshRate;
 
     // Settings › Video, read when the stream starts
     int _pacingMode;
@@ -141,6 +142,7 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
         _decoded = [[NSMutableArray alloc] init];
     }
     _statsLock = OS_UNFAIR_LOCK_INIT;
+    _maxRefreshRate = [UIScreen mainScreen].maximumFramesPerSecond; // init runs on the main thread; start doesn't
     
     parameterSetBuffers = [[NSMutableArray alloc] init];
     
@@ -160,7 +162,7 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
 #if !TARGET_OS_TV
     // x2 interpolation needs the VideoToolbox renderer and a screen fast enough for twice the frame rate
     if (_videoToolbox && [[NSUserDefaults standardUserDefaults] boolForKey:@"mnFrameInterpolation"]
-        && frameRate * 2 <= [UIScreen mainScreen].maximumFramesPerSecond && MNFrameInterpolator.isSupported) {
+        && frameRate * 2 <= _maxRefreshRate && MNFrameInterpolator.isSupported) {
         __weak VideoDecoderRenderer* weakSelf = self;
         _interpolator = [[MNFrameInterpolator alloc] initWithOutput:^(CMSampleBufferRef frame, BOOL drawn) {
             [weakSelf queueDecodedFrame:frame drawn:drawn];
