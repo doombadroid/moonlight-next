@@ -62,6 +62,15 @@ import os
     }
     private var frameRate = 60
 
+    /// True when the stream menu can open picture in picture by hand.
+    @objc var canStart: Bool { controller?.isPictureInPicturePossible == true && !isActive }
+
+    /// Opens picture in picture from the stream menu. Works with "Let other apps keep playing"
+    /// on too, where iOS won't start it automatically on leaving the app.
+    @objc func start() {
+        controller?.startPictureInPicture()
+    }
+
     /// Called when the stream ends.
     @objc func detach() {
         DispatchQueue.main.async { self.detachOnMain() }

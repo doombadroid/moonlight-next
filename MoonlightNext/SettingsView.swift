@@ -21,7 +21,7 @@ private let resolutionOptions: [(label: String, width: Int, height: Int)] = [
 /// Bitrate slider notches in Kbps (from SettingsViewController)
 private let bitrateTable = [500, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
                             12000, 15000, 18000, 20000, 30000, 40000, 50000, 60000, 70000, 80000,
-                            100000, 120000, 150000]
+                            100000, 120000, 150000, 200000, 250000, 300000, 400000, 500000, 600000, 800000]
 
 /// Codec preference values (TemporarySettings' CODEC_PREF_* enum)
 enum StreamCodec: Int, CaseIterable {
@@ -53,11 +53,13 @@ final class SettingsStore: ObservableObject {
     @Published var optimizeGames: Bool { didSet { save() } }
     @Published var playAudioOnPC: Bool { didSet { save() } }
     @Published var statsOverlay: Bool { didSet { save() } }
-    private let audioConfig: Int
+    /// Channel count: 2, 6 (5.1) or 8 (7.1)
+    @Published var audioConfig: Int { didSet { save() } }
 
     let hevcSupported = MNBridge.hevcSupported()
     let av1Supported = MNBridge.av1Supported()
     let hdrSupported = MNBridge.hdrSupported()
+    let yuv444Supported = MNBridge.yuv444Supported()
     let supports120 = UIScreen.main.maximumFramesPerSecond > 62
 
     init() {
@@ -95,6 +97,12 @@ final class SettingsStore: ObservableObject {
 
     var isCustomResolution: Bool {
         !resolutionOptions.contains { $0.width == width && $0.height == height }
+    }
+
+    /// Typed-in size: clamped to what hosts encode and rounded to even numbers.
+    func setCustomResolution(width: Int, height: Int) {
+        func even(_ v: Int, _ hi: Int) -> Int { min(max(v, 256), hi) & ~1 }
+        setResolution(width: even(width, 7680), height: even(height, 4320))
     }
 
     func setResolution(width: Int, height: Int) {
@@ -190,18 +198,25 @@ struct SettingsView: View {
             touchMode = $0
         })
     }
+    // Video, audio and stream options (read by MNBridge, Connection and the stream screen)
+    @AppStorage("mnResolutionSafeArea") private var safeAreaResolution = false
+    @AppStorage("mnYUV444") private var yuv444 = false
+    @AppStorage("mnFullColorRange") private var fullColorRange = false
+    @AppStorage("mnStatsDetailed") private var statsDetailed = true
+    @AppStorage(MNAudio.volumeKey) private var streamVolume = 1.0
+    @AppStorage(MNAudio.mixKey) private var mixWithOthers = false
+    @AppStorage(MNAudio.muteInBackgroundKey) private var muteInBackground = false
+    @AppStorage(MNAudio.backgroundMinutesKey) private var backgroundMinutes = 0
+    @AppStorage(MNExternalDisplay.enabledKey) private var externalDisplayOnly = false
+    @State private var showCustomResolution = false
+    @State private var customWidth = ""
+    @State private var customHeight = ""
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    choice("Resolution", note: store.isCustomResolution ? "Custom \(store.width)×\(store.height)" : (store.width == 0 ? "Fits the screen you stream on" : nil)) {
-                        Picker("Resolution", selection: Binding(
-                            get: { store.isCustomResolution ? -1 : store.resolutions.firstIndex { $0.width == store.width && $0.height == store.height } ?? -1 },
-                            set: { let r = store.resolutions[$0]; store.setResolution(width: r.width, height: r.height) })) {
-                            ForEach(store.resolutions.indices, id: \.self) { Text(store.resolutions[$0].label).tag($0) }
-                        }
-                    }
+                    resolutionRow
                     choice("Frame rate") {
                         Picker("Frame rate", selection: Binding(get: { store.framerate }, set: { store.setFramerate($0) })) {
                             Text("30").tag(30)
@@ -229,6 +244,10 @@ struct SettingsView: View {
                     if store.hdrSupported {
                         Toggle("HDR", isOn: $store.enableHdr)
                     }
+                    if store.yuv444Supported && [StreamCodec.auto.rawValue, StreamCodec.hevc.rawValue].contains(store.codec) {
+                        Toggle("Full color (4:4:4)", isOn: $yuv444)
+                    }
+                    Toggle("Full color range", isOn: $fullColorRange)
                     choice("Frame pacing") {
                         Picker("Frame pacing", selection: $store.useFramePacing) {
                             Text("Lowest latency").tag(false)
@@ -238,9 +257,38 @@ struct SettingsView: View {
                 } header: {
                     Theme.label("Video")
                 } footer: {
-                    if inStream {
-                        Text("Video changes apply the next time you connect. Controls, gyro, haptics and trackpad speed apply now.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        if inStream {
+                            Text("Video, sound channels and resolution apply the next time you connect. Controls, gyro, haptics, volume and trackpad speed apply now.")
+                        }
+                        Text("Full color (4:4:4) keeps desktop text sharp. It uses HEVC, and the PC's GPU encoder must support HEVC 4:4:4; if it doesn't, the stream quietly stays at normal color. Full color range sends 0–255 levels for deeper blacks; turn it off if blacks look crushed. Over 150 Mb/s needs a fast, close Wi-Fi 6 or wired PC.")
                     }
+                }
+
+                Section {
+                    choice("Sound") {
+                        Picker("Sound", selection: $store.audioConfig) {
+                            Text("Stereo").tag(2)
+                            Text("5.1").tag(6)
+                            Text("7.1").tag(8)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Stream volume")
+                            Spacer()
+                            Text("\(Int((streamVolume * 100).rounded()))%").foregroundStyle(Theme.muted)
+                        }
+                        Slider(value: $streamVolume, in: 0...1, step: 0.05)
+                            .onChange(of: streamVolume) { MNAudio.reload() }
+                    }
+                    Toggle("Play audio on PC", isOn: $store.playAudioOnPC)
+                    Toggle("Let other apps keep playing", isOn: $mixWithOthers)
+                    Toggle("Mute when in background", isOn: $muteInBackground)
+                } header: {
+                    Theme.label("Audio")
+                } footer: {
+                    Text("5.1 and 7.1 need a surround setup on the PC; on iOS 18 and later AirPods and other headphones play them as spatial audio. With other apps playing, picture in picture only opens from the ••• menu. Mute applies while the stream stays connected in the background.")
                 }
 
                 Section {
@@ -321,16 +369,41 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Optimize game settings", isOn: $store.optimizeGames)
-                    Toggle("Play audio on PC", isOn: $store.playAudioOnPC)
-                    Toggle("Stats overlay", isOn: $store.statsOverlay)
+                    choice("Stats") {
+                        Picker("Stats", selection: Binding(
+                            get: { store.statsOverlay ? (statsDetailed ? 2 : 1) : 0 },
+                            set: { store.statsOverlay = $0 > 0; if $0 > 0 { statsDetailed = $0 == 2 } })) {
+                            Text("Off").tag(0)
+                            Text("Simple").tag(1)
+                            Text("Detailed").tag(2)
+                        }
+                    }
                     if AVPictureInPictureController.isPictureInPictureSupported() {
                         Toggle("Picture in picture", isOn: $pictureInPicture)
                     }
+                    HStack {
+                        Text("Stay connected in background")
+                        Spacer()
+                        Picker("Stay connected in background", selection: $backgroundMinutes) {
+                            Text("Off").tag(0)
+                            Text("1 min").tag(1)
+                            Text("5 min").tag(5)
+                            Text("15 min").tag(15)
+                            Text("30 min").tag(30)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+                    Toggle("Video on external display", isOn: $externalDisplayOnly)
+                        .onChange(of: externalDisplayOnly) { MNExternalDisplay.shared.update() }
                 } header: {
                     Theme.label("Stream")
                 } footer: {
-                    if AVPictureInPictureController.isPictureInPictureSupported() {
-                        Text("Picture in picture keeps the stream playing in a small window when you leave the app. Close the window to end the stream. With it on, the stream pauses music from other apps.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        if AVPictureInPictureController.isPictureInPictureSupported() {
+                            Text("Picture in picture keeps the stream playing in a small window when you leave the app; you can also open it from the ••• menu. Close the window to end the stream.")
+                        }
+                        Text("Without picture in picture, leaving the app ends the stream unless it stays connected for the time chosen. With a USB-C or AirPlay screen connected, \"Video on external display\" shows the game there while this screen keeps the controls and keyboard; Native resolution then matches that screen.")
                     }
                 }
             }
@@ -373,6 +446,59 @@ struct SettingsView: View {
                 Text(String(format: "%.2g×", value.wrappedValue)).foregroundStyle(Theme.muted)
             }
             Slider(value: value, in: range, step: step)
+        }
+    }
+
+    /// Resolution menu: presets, Native, Safe area (Native clear of the cut-outs) and a typed size.
+    private var resolutionRow: some View {
+        HStack {
+            Text("Resolution")
+            Spacer()
+            Picker("Resolution", selection: Binding(
+                get: {
+                    if store.isCustomResolution { return -1 }
+                    if store.width == 0 && safeAreaResolution { return -3 }
+                    return store.resolutions.firstIndex { $0.width == store.width && $0.height == store.height } ?? -1
+                },
+                set: { tag in
+                    switch tag {
+                    case -2:
+                        customWidth = store.width > 0 ? String(store.width) : ""
+                        customHeight = store.height > 0 ? String(store.height) : ""
+                        showCustomResolution = true
+                    case -3:
+                        safeAreaResolution = true
+                        store.setResolution(width: 0, height: 0)
+                    case 0..<store.resolutions.count:
+                        safeAreaResolution = false
+                        let r = store.resolutions[tag]
+                        store.setResolution(width: r.width, height: r.height)
+                    default:
+                        break
+                    }
+                })) {
+                ForEach(store.resolutions.indices, id: \.self) { Text(store.resolutions[$0].label).tag($0) }
+                Text("Safe area").tag(-3)
+                if store.isCustomResolution {
+                    Text("\(store.width)×\(store.height)").tag(-1)
+                }
+                Text("Custom…").tag(-2)
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+        }
+        .alert("Custom resolution", isPresented: $showCustomResolution) {
+            TextField("Width", text: $customWidth).keyboardType(.numberPad)
+            TextField("Height", text: $customHeight).keyboardType(.numberPad)
+            Button("Cancel", role: .cancel) {}
+            Button("Set") {
+                if let w = Int(customWidth), let h = Int(customHeight) {
+                    safeAreaResolution = false
+                    store.setCustomResolution(width: w, height: h)
+                }
+            }
+        } message: {
+            Text("Width and height in pixels. Above 4096 needs HEVC.")
         }
     }
 

@@ -28,6 +28,7 @@
     NSMutableArray<NSNumber*>* _lateHistory;   // worst delay spike per second, ms
     NSMutableArray<NSNumber*>* _stutterHistory; // network hitches per second
     NSMutableArray<NSNumber*>* _hostGapHistory; // PC frame gaps per second
+    NSMutableArray<NSNumber*>* _bitrateHistory; // video Mb/s per second
     CFTimeInterval _lastStatsEnd;
 }
 
@@ -161,15 +162,23 @@
     if (![_connection getVideoStats:&stats]) {
         return nil;
     }
+    [self recordStatsWindow:&stats];
     
     uint32_t rtt, variance;
-    NSString* latencyString;
-    if (LiGetEstimatedRttInfo(&rtt, &variance)) {
-        latencyString = [NSString stringWithFormat:@"%u ms (variance: %u ms)", rtt, variance];
+    BOOL haveRtt = LiGetEstimatedRttInfo(&rtt, &variance);
+    float interval = stats.endTime - stats.startTime;
+    float fps = stats.totalFrames / interval;
+    double mbps = stats.receivedBytes * 8 / interval / 1e6;
+    double dropPercent = stats.totalFrames > 0 ? 100.0 * stats.networkDroppedFrames / stats.totalFrames : 0;
+
+    // Settings › Stream › Stats: Simple is one line (absent key = Detailed, as before levels)
+    NSNumber* detailed = [[NSUserDefaults standardUserDefaults] objectForKey:@"mnStatsDetailed"];
+    if (detailed != nil && !detailed.boolValue) {
+        NSString* latency = haveRtt ? [NSString stringWithFormat:@"%u ms", rtt] : @"– ms";
+        return [NSString stringWithFormat:@"%.0f fps · %.1f Mb/s · %@ · %.1f%% lost", fps, mbps, latency, dropPercent];
     }
-    else {
-        latencyString = @"N/A";
-    }
+
+    NSString* latencyString = haveRtt ? [NSString stringWithFormat:@"%u ms (variance: %u ms)", rtt, variance] : @"N/A";
     
     NSString* hostProcessingString;
     if (stats.framesWithHostProcessingLatency != 0) {
@@ -181,42 +190,56 @@
     else {
         hostProcessingString = @"";
     }
-    
-    float interval = stats.endTime - stats.startTime;
-    return [NSString stringWithFormat:@"Video stream: %dx%d %.2f FPS (Codec: %@)\nFrames dropped by your network connection: %.2f%%\nAverage network latency: %@%@%@",
+
+    double avgMbps = [[_bitrateHistory valueForKeyPath:@"@avg.self"] doubleValue];
+    double peakMbps = [[_bitrateHistory valueForKeyPath:@"@max.self"] doubleValue];
+    return [NSString stringWithFormat:@"Video stream: %dx%d %.2f FPS (Codec: %@, %@ range)\n"
+            "Bitrate: %.1f Mb/s, average %.1f, peak %.1f (last %lus)\n"
+            "Renderer: AVSampleBufferDisplayLayer, %@ · %d frame(s) buffered\n"
+            "Frames dropped by your network connection: %.2f%%\nAverage network latency: %@%@%@",
             _config.width,
             _config.height,
-            stats.totalFrames / interval,
+            fps,
             [_connection getActiveCodecName],
-            stats.networkDroppedFrames / interval,
+            _config.fullColorRange ? @"full" : @"limited",
+            mbps, avgMbps, peakMbps, (unsigned long)_bitrateHistory.count,
+            _config.useFramePacing ? @"smoothest pacing" : @"lowest latency",
+            LiGetPendingVideoFrames(),
+            dropPercent,
             latencyString,
             hostProcessingString,
-            [self stutterTextForStats:&stats]];
+            [self stutterText]];
 }
 
-// Stutter diagnostics: a 30-second graph of network delay spikes, hitch counts split
-// between the network and the PC, and a tip when hitches repeat on a fixed period (the
-// usual sign of Wi-Fi scanning or AirDrop/AWDL channel hopping on the phone).
-- (NSString*) stutterTextForStats:(video_stats_t*)stats {
+// Keeps the last 30 one-second windows for the stutter graph and the bitrate average and peak.
+- (void) recordStatsWindow:(video_stats_t*)stats {
     const NSUInteger window = 30;
     if (_lateHistory == nil) {
         _lateHistory = [NSMutableArray array];
         _stutterHistory = [NSMutableArray array];
         _hostGapHistory = [NSMutableArray array];
+        _bitrateHistory = [NSMutableArray array];
     }
-    if (stats->endTime != _lastStatsEnd) {
+    if (stats->endTime == _lastStatsEnd) {
         // The overlay timer can read the same one-second window twice
-        _lastStatsEnd = stats->endTime;
-        [_lateHistory addObject:@(stats->maxLateUs / 1000.0)];
-        [_stutterHistory addObject:@(stats->networkStutters)];
-        [_hostGapHistory addObject:@(stats->hostGaps)];
-        while (_lateHistory.count > window) {
-            [_lateHistory removeObjectAtIndex:0];
-            [_stutterHistory removeObjectAtIndex:0];
-            [_hostGapHistory removeObjectAtIndex:0];
+        return;
+    }
+    _lastStatsEnd = stats->endTime;
+    [_lateHistory addObject:@(stats->maxLateUs / 1000.0)];
+    [_stutterHistory addObject:@(stats->networkStutters)];
+    [_hostGapHistory addObject:@(stats->hostGaps)];
+    [_bitrateHistory addObject:@(stats->receivedBytes * 8 / (stats->endTime - stats->startTime) / 1e6)];
+    for (NSMutableArray* history in @[_lateHistory, _stutterHistory, _hostGapHistory, _bitrateHistory]) {
+        while (history.count > window) {
+            [history removeObjectAtIndex:0];
         }
     }
+}
 
+// Stutter diagnostics: a 30-second graph of network delay spikes, hitch counts split
+// between the network and the PC, and a tip when hitches repeat on a fixed period (the
+// usual sign of Wi-Fi scanning or AirDrop/AWDL channel hopping on the phone).
+- (NSString*) stutterText {
     NSMutableString* graph = [NSMutableString string];
     double worst = 0;
     for (NSNumber* ms in _lateHistory) {

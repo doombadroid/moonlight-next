@@ -66,13 +66,17 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     // can see the loading progress label as the stream is starting.
     displayLayer.hidden = YES;
     
+    // The layer may have been moved to an external display; replace it wherever it is
+    CALayer *parent = oldLayer.superlayer ?: _view.layer;
     if (oldLayer != nil) {
         // Switch out the old display layer with the new one
-        [_view.layer replaceSublayer:oldLayer with:displayLayer];
+        [parent replaceSublayer:oldLayer with:displayLayer];
     }
     else {
-        [_view.layer addSublayer:displayLayer];
+        [parent addSublayer:displayLayer];
     }
+    // Lets the hosting view re-fit the new layer to its own bounds
+    [parent setNeedsLayout];
     
     if (formatDesc != nil) {
         CFRelease(formatDesc);

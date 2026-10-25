@@ -16,6 +16,7 @@
 #import "MNInput.h"
 #endif
 
+#include <errno.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -363,6 +364,12 @@
                                                 identifier:nil
                                                    handler:^(UIAction* action) { [MNControllerMouse.shared toggle]; }]];
         }
+        if (MNPictureInPicture.shared.canStart) {
+            [gyroItems addObject:[UIAction actionWithTitle:@"Picture in Picture"
+                                                     image:[UIImage systemImageNamed:@"pip.enter"]
+                                                identifier:nil
+                                                   handler:^(UIAction* action) { [MNPictureInPicture.shared start]; }]];
+        }
         if ([strongSelf->_streamView visibleOnScreenControls] != nil) {
             [gyroItems addObject:[UIAction actionWithTitle:@"Edit Controls"
                                                      image:[UIImage systemImageNamed:@"arrow.up.and.down.and.arrow.left.and.right"]
@@ -661,6 +668,8 @@ static os_log_t DuoLog(void) {
     [MNPhoneRumble.shared stop];
     [MNControllerMouse.shared stop];
     [MNInput setControllerSupport:nil];
+    [MNExternalDisplay.shared streamEnded];
+    MNAudio.backgroundMuted = NO;
 #endif
 
     [_controllerSupport cleanup];
@@ -827,6 +836,9 @@ static os_log_t DuoLog(void) {
 }
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification {
+#if !TARGET_OS_TV
+    MNAudio.backgroundMuted = NO;
+#endif
     // Stop the background timer, since we're foregrounded again
     if (_inactivityTimer != nil) {
         Log(LOG_I, @"Stopping inactivity timer after becoming active again");
@@ -843,7 +855,7 @@ static os_log_t DuoLog(void) {
     }
 
 #if !TARGET_OS_TV
-    if (MNPictureInPicture.enabled) {
+    if (MNPictureInPicture.enabled || MNPictureInPicture.shared.isActive) {
         // Picture in picture starts around the same moment the app backgrounds; give it a
         // moment, and keep the stream if it did. Audio background mode keeps us running.
         __weak StreamFrameViewController* weakSelf = self;
@@ -851,16 +863,39 @@ static os_log_t DuoLog(void) {
             if (MNPictureInPicture.shared.isActive || UIApplication.sharedApplication.applicationState != UIApplicationStateBackground) {
                 return;
             }
-            Log(LOG_I, @"Terminating stream for backgrounding (no picture in picture)");
-            [weakSelf returnToMainFrame];
+            [weakSelf backgroundWithoutPictureInPicture];
         });
         return;
     }
+    [self backgroundWithoutPictureInPicture];
+    return;
 #endif
 
     Log(LOG_I, @"Terminating stream immediately for backgrounding");
     [self returnToMainFrame];
 }
+
+#if !TARGET_OS_TV
+// In the background without picture in picture: stay connected for the minutes chosen in
+// Settings (audio background mode keeps the app running, muted if asked), else end now.
+// Adapted from VoidLink (GPLv3), StreamFrameViewController.m (background session timer).
+- (void)backgroundWithoutPictureInPicture {
+    NSInteger minutes = MNAudio.backgroundMinutes;
+    if (minutes <= 0) {
+        Log(LOG_I, @"Terminating stream for backgrounding");
+        [self returnToMainFrame];
+        return;
+    }
+    Log(LOG_I, @"Keeping the stream connected in the background for %ld min", (long)minutes);
+    MNAudio.backgroundMuted = MNAudio.muteInBackground;
+    [_inactivityTimer invalidate];
+    _inactivityTimer = [NSTimer scheduledTimerWithTimeInterval:minutes * 60
+                                                        target:self
+                                                      selector:@selector(inactiveTimerExpired:)
+                                                      userInfo:nil
+                                                       repeats:NO];
+}
+#endif
 
 - (void)edgeSwiped:(UIGestureRecognizer*)gesture {
 #if !TARGET_OS_TV
@@ -930,6 +965,10 @@ static os_log_t DuoLog(void) {
         self->_tipLabel.hidden = YES;
         
         [self->_streamView showOnScreenControls];
+#if !TARGET_OS_TV
+        [MNExternalDisplay.shared streamStarted:self->_streamView
+                                    aspectRatio:(CGFloat)self.streamConfig.width / self.streamConfig.height];
+#endif
         
         [self->_controllerSupport connectionEstablished];
         
@@ -1006,6 +1045,10 @@ static os_log_t DuoLog(void) {
                     
                     title = @"Connection Terminated";
                     message = [NSString stringWithFormat: @"The connection was terminated\n\nError code: %@", errorString];
+                    NSString* hint = [StreamFrameViewController adviceForTerminationCode:errorCode];
+                    if (hint != nil) {
+                        message = [NSString stringWithFormat:@"%@\n\n%@", hint, message];
+                    }
                     break;
                 }
             }
@@ -1022,6 +1065,31 @@ static os_log_t DuoLog(void) {
     });
 
     [_streamMan stopStream];
+}
+
+// Plain advice for the usual ways a running stream drops. common-c reports socket errors as
+// errno values and a lost or silent PC as -1. Idea from VoidLink (GPLv3), StreamFrameViewController.m.
++ (NSString*)adviceForTerminationCode:(int)errorCode {
+    switch (errorCode) {
+        case -1:
+            return @"The PC stopped answering. It may have gone to sleep, lost its network, or Sunshine restarted. Check the PC is awake and reachable, then reconnect.";
+        case ETIMEDOUT:
+            return @"The connection timed out. The Wi-Fi signal probably dropped; move closer to the router or use a 5 or 6 GHz network.";
+        case ECONNRESET:
+        case EPIPE:
+        case ECONNABORTED:
+            return @"The PC closed the connection. Sunshine may have restarted, or the session was ended on the PC.";
+        case ENETDOWN:
+        case ENETUNREACH:
+        case EHOSTUNREACH:
+        case EADDRNOTAVAIL:
+            return @"This device lost its network: Wi-Fi turned off, it switched networks, or a VPN changed. Reconnect once you're back on the PC's network.";
+        case ENOBUFS:
+        case ENOMEM:
+            return @"This device ran out of network buffers or memory. Close other apps or lower the bitrate.";
+        default:
+            return nil;
+    }
 }
 
 - (void) stageStarting:(const char*)stageName {
