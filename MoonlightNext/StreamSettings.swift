@@ -12,7 +12,7 @@ struct AudioSettings: View {
     @ObservedObject var store: SettingsStore
 
     @AppStorage(MNAudio.volumeKey) private var streamVolume = 1.0
-    @AppStorage(MNAudio.mixKey) private var mixWithOthers = false
+    @AppStorage(MNAudio.mixKey) private var mixWithOthers = MNAudio.mixWithOthers
     @AppStorage(MNAudio.muteInBackgroundKey) private var muteInBackground = false
 
     var body: some View {

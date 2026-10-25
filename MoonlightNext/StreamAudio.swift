@@ -30,8 +30,11 @@ import Foundation
     /// Gain applied to every decoded sample. The slider is squared so it feels even to the ear.
     @objc static var outputGain: Float { backgroundMuted ? 0 : volume * volume }
 
-    /// Settings › Audio › Let other apps keep playing (off: the stream pauses them)
-    @objc static var mixWithOthers: Bool { UserDefaults.standard.bool(forKey: mixKey) }
+    /// Settings › Audio › Let other apps keep playing (off: the stream pauses them). Until it's
+    /// set, it follows the old rule: other apps kept playing exactly when picture in picture was off.
+    @objc static var mixWithOthers: Bool {
+        UserDefaults.standard.object(forKey: mixKey) as? Bool ?? !MNPictureInPicture.enabled
+    }
 
     @objc static var muteInBackground: Bool { UserDefaults.standard.bool(forKey: muteInBackgroundKey) }
 
