@@ -504,7 +504,7 @@
 static os_log_t DuoLog(void) {
     static os_log_t log;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ log = os_log_create("com.doombadroid.moonlightnext", "duo"); });
+    dispatch_once(&once, ^{ log = os_log_create("com.doombadroid.moonlume", "duo"); });
     return log;
 }
 

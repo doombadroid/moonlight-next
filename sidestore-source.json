@@ -5,7 +5,7 @@
   "apps": [
     {
       "name": "MoonLume",
-      "bundleIdentifier": "com.doombadroid.moonlightnext",
+      "bundleIdentifier": "com.doombadroid.moonlume",
       "developerName": "doombadroid (fork of moonlight-stream/moonlight-ios)",
       "subtitle": "Stream games from your PC",
       "localizedDescription": "Fork of Moonlight for iOS (GPL-3.0) with a dark SwiftUI launcher and iPhone Duo fold/unfold support. Streams from Sunshine or GeForce Experience.",

@@ -53,7 +53,7 @@ enum PalmRejection: Int, CaseIterable {
 final class PalmGuard {
     static let shared = PalmGuard()
 
-    private static let log = Logger(subsystem: "com.doombadroid.moonlightnext", category: "deck")
+    private static let log = Logger(subsystem: "com.doombadroid.moonlume", category: "deck")
     /// Touches judged to be palms. Weak, so a touch whose end never reached us can't linger.
     private var palms: [WeakTouch] = []
     private struct WeakTouch { weak var touch: UITouch? }

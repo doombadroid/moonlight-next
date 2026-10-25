@@ -38,7 +38,7 @@ import os
     private var pumpTimer: Timer?
     private var restoring = false
     private var possibleObservation: NSKeyValueObservation?
-    private let log = Logger(subsystem: "com.doombadroid.moonlightnext", category: "pip")
+    private let log = Logger(subsystem: "com.doombadroid.moonlume", category: "pip")
 
     /// Called whenever the renderer creates a display layer (the first one and any replacement).
     /// The renderer calls in from stream threads, so the work hops to the main thread.

@@ -57,7 +57,7 @@ jobs:
           done
           # iOS 27 SDK apps without a scene manifest die at launch (TN3187)
           /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' $plist
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' $plist)" = com.doombadroid.moonlightnext
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' $plist)" = com.doombadroid.moonlume
           sdk=$(xcrun vtool -show-build Payload/Moonlight.app/Moonlight | awk '/sdk/ {print $2; exit}')
           echo "Built against iOS SDK $sdk"
           echo "BUILD_TOOLCHAIN=$(xcodebuild -version | tr '\n' ' ' | sed 's/ *$//'), iOS SDK $sdk" >> "$GITHUB_ENV"
@@ -101,7 +101,7 @@ jobs:
                   "subtitle": "Moonlight game streaming, redesigned for iPhone Duo",
                   "apps": [{
                       "name": "MoonLume",
-                      "bundleIdentifier": "com.doombadroid.moonlightnext",
+                      "bundleIdentifier": "com.doombadroid.moonlume",
                       "developerName": "doombadroid (fork of moonlight-stream/moonlight-ios)",
                       "subtitle": "Stream games from your PC",
                       "localizedDescription": "Fork of Moonlight for iOS (GPL-3.0) with a dark SwiftUI launcher and iPhone Duo fold/unfold support. Streams from Sunshine or GeForce Experience.",
@@ -178,7 +178,7 @@ jobs:
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
           xcrun simctl install "$udid" "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/Moonlight.app"
-          xcrun simctl launch "$udid" com.doombadroid.moonlightnext
+          xcrun simctl launch "$udid" com.doombadroid.moonlume
           sleep 10
           mkdir -p "$RUNNER_TEMP/shots"
           # iPhone Duo has two displays: capture whichever exist (outer and inner)

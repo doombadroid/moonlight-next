@@ -144,7 +144,7 @@ git clone --recursive https://github.com/doombadroid/moonlight-next.git
 
 If you cloned without `--recursive`, run `git submodule update --init --recursive`.
 
-Open `Moonlight.xcodeproj` and pick the **Moonlight** scheme. To run on a device, set your team under Signing & Capabilities and change the bundle identifier (`com.doombadroid.moonlightnext`) to one of your own.
+Open `Moonlight.xcodeproj` and pick the **Moonlight** scheme. To run on a device, set your team under Signing & Capabilities and change the bundle identifier (`com.doombadroid.moonlume`) to one of your own.
 
 Layout of the code:
 - **`MoonlightNext/`:** the Swift app: launcher, settings, input deck, widgets, gyro, picture in picture and the other new features. It is iOS only.

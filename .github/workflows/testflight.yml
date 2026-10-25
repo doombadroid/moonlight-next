@@ -1,0 +1,135 @@
+name: TestFlight
+
+# Archives MoonLume signed for distribution and uploads it to App Store Connect,
+# where it lands in TestFlight. Signing is Xcode's automatic, cloud-managed kind:
+# the App Store Connect API key (Admin role, team key) is the only credential, and
+# Xcode makes the distribution certificate and profiles itself.
+#
+# Secrets (in the "app-store" environment, which only master may use):
+# ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (the .p8 file's text, or it base64-encoded).
+# Adapted from doombadroid/glassfin's verified TestFlight workflow.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+env:
+  XCODE: '27.1'
+  TEAM_ID: 99SJ7X62CF
+  BUNDLE_ID: com.doombadroid.moonlume
+
+jobs:
+  upload:
+    runs-on: xcode-27
+    # The key lives in this environment, limited to master, so no other workflow in
+    # this public repo (or a fork's pull request) can read it.
+    environment: app-store
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore the App Store Connect API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          for name in ASC_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID; do
+            [ -n "${!name}" ] || { echo "::error::secret $name is not set"; exit 1; }
+          done
+          key="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          if printf '%s' "$ASC_KEY_P8" | grep -q 'BEGIN PRIVATE KEY'; then printf '%s\n' "$ASC_KEY_P8" > "$key"
+          else printf '%s' "$ASC_KEY_P8" | base64 -d > "$key"; fi
+          grep -q 'BEGIN PRIVATE KEY' "$key" || { echo "::error::ASC_KEY_P8 is not a .p8 key"; exit 1; }
+          echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: '${{ env.XCODE }}' }
+
+      # App Store Connect wants a build number above every earlier upload of this
+      # version; this workflow's run number only grows. Limelight-Info.plist reads
+      # CFBundleVersion from CURRENT_PROJECT_VERSION, and there are no extensions.
+      - name: Set the build number
+        run: echo "BUILD_NUMBER=${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      - name: Archive, signed for distribution
+        run: |
+          xcodebuild -version
+          xcodebuild archive \
+            -project Moonlight.xcodeproj -scheme Moonlight -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/MoonLume.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            | tee "$RUNNER_TEMP/archive.log" | grep -E '^\*\*|error:|Signing Identity|Provisioning Profile' || true
+          test -d "$RUNNER_TEMP/MoonLume.xcarchive/Products/Applications" || { tail -200 "$RUNNER_TEMP/archive.log"; exit 1; }
+
+      - name: Check the archive
+        run: |
+          app=$(ls -d "$RUNNER_TEMP"/MoonLume.xcarchive/Products/Applications/*.app | head -1)
+          exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
+          for key in CFBundleIdentifier CFBundleDisplayName CFBundleShortVersionString CFBundleVersion MinimumOSVersion; do
+            echo "$key = $(/usr/libexec/PlistBuddy -c "Print :$key" "$app/Info.plist")"
+          done
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")" = "$BUNDLE_ID"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist")" = "$BUILD_NUMBER"
+          # iOS 27 SDK apps without a scene manifest die at launch (TN3187)
+          /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' "$app/Info.plist" >/dev/null
+          echo "iOS SDK $(xcrun vtool -show-build "$app/$exe" | awk '/sdk/ {print $2; exit}')"
+          codesign -dvv "$app" 2>&1 | grep -E 'Authority=|TeamIdentifier'
+          for ext in "$app"/PlugIns/*.appex; do
+            [ -d "$ext" ] || continue
+            echo "$(basename "$ext"): $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$ext/Info.plist") build $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ext/Info.plist")"
+          done
+
+      - name: Upload to App Store Connect
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/MoonLume.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            2>&1 | tee "$RUNNER_TEMP/export.log" | grep -vE '^\s*$' | tail -40
+          grep -qE 'EXPORT SUCCEEDED|Upload succeeded|Uploaded' "$RUNNER_TEMP/export.log" || exit 1
+          echo "Build $BUILD_NUMBER uploaded; it appears in TestFlight once App Store Connect finishes processing it."
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xcodebuild-logs
+          path: |
+            ${{ runner.temp }}/archive.log
+            ${{ runner.temp }}/export.log
+          if-no-files-found: ignore
+
+      - name: Remove the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8

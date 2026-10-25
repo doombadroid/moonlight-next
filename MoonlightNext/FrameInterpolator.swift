@@ -31,11 +31,11 @@ import os
     }
 
     private let output: Output
-    private let queue = DispatchQueue(label: "com.doombadroid.moonlightnext.interpolator", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "com.doombadroid.moonlume.interpolator", qos: .userInteractive)
     private var previousPTS = CMTime.invalid
     private var engine: AnyObject? // Engine; iOS 26 only, so it's kept untyped here
     private var engineSize = (0, 0)
-    private let log = Logger(subsystem: "com.doombadroid.moonlightnext", category: "interpolation")
+    private let log = Logger(subsystem: "com.doombadroid.moonlume", category: "interpolation")
     /// Frames submitted but not yet processed. Decoding never waits for the interpolator, so when it
     /// falls behind (thermal throttling, GPU work refused in the background) frames pass straight
     /// through instead of piling up, with their latency and decoder buffers, on the queue.
