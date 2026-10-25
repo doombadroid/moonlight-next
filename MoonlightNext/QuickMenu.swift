@@ -110,6 +110,10 @@ enum QuickMenuGeometry {
     /// (Limelight.h) to keep from the host, or -1 to keep the whole pad from it.
     @objc func intercept(_ gamepad: GCExtendedGamepad) -> Int32 {
         if MNControllerNav.shared.drivesUIOverStream {
+            if phase != .idle {
+                close()
+                phase = .idle
+            }
             return -1
         }
         switch phase {
