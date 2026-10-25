@@ -200,6 +200,9 @@ enum QuickMenuGeometry {
         }
     }
 
+    /// The wheel is up, or its closing buttons are still held: the pad belongs to the menu.
+    var ownsPad: Bool { phase == .open || phase == .draining }
+
     /// A short press of the menu button to send to the host as a tap (its flags), or 0.
     @objc func takeTap() -> Int32 {
         defer { tap = 0 }

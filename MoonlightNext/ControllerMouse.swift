@@ -45,7 +45,8 @@ enum ControllerMouseSettings {
     private var remainder = (x: 0.0, y: 0.0, scrollX: 0.0, scrollY: 0.0)
     private var leftDown = false
     private var rightDown = false
-    private var chordWasDown = false
+    /// The pad holding the Select + R3 chord; other pads' input doesn't touch the chord's state
+    private weak var chordPad: GCExtendedGamepad?
     /// After the chord turns mouse mode off, the chord's buttons stay away from the game until released
     private var swallowUntilReleased = false
 
@@ -55,17 +56,25 @@ enum ControllerMouseSettings {
     /// ControllerSupport calls this for every input change on a physical pad, on the main
     /// thread. True means the change belongs to the pointer, not the game.
     @objc func intercept(_ gamepad: GCExtendedGamepad) -> Bool {
+        if let chordPad, chordPad !== gamepad {
+            return isOn && gamepad === pad
+        }
         let chordDown = ControllerMouseSettings.chordEnabled
             && gamepad.buttonOptions?.isPressed == true && gamepad.rightThumbstickButton?.isPressed == true
-        defer { chordWasDown = chordDown }
-        if chordDown && !chordWasDown {
-            set(on: !isOn, pad: gamepad)
-            if !isOn { swallowUntilReleased = true }
-            return true
+        if chordDown {
+            if chordPad == nil {
+                chordPad = gamepad
+                set(on: !isOn, pad: gamepad)
+                swallowUntilReleased = !isOn
+                return true
+            }
+        } else if !swallowUntilReleased {
+            chordPad = nil
         }
         if swallowUntilReleased {
             if gamepad.buttonOptions?.isPressed == true || gamepad.rightThumbstickButton?.isPressed == true { return true }
             swallowUntilReleased = false
+            chordPad = nil
         }
         return isOn && gamepad === pad
     }
@@ -101,9 +110,10 @@ enum ControllerMouseSettings {
             stop()
             return
         }
-        guard UIApplication.shared.applicationState == .active else {
-            // In the background (the stream kept alive) the pad's values freeze: don't keep moving
-            // or holding a click with them
+        // In the background (the stream kept alive) the pad's values freeze; with the quick menu or
+        // a sheet over the stream the pad drives that: either way, no pointer movement or clicks
+        guard UIApplication.shared.applicationState == .active, !MNQuickMenu.shared.ownsPad,
+              !MNControllerNav.shared.drivesUIOverStream else {
             pause()
             return
         }
