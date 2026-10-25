@@ -21,6 +21,8 @@ struct LauncherView: View {
     @SwiftUI.State private var showSettings = false
     @SwiftUI.State private var showAddHost = false
     @SwiftUI.State private var newHostAddress = ""
+    /// The second page of a computer's controller options (X, then Y: More)
+    @SwiftUI.State private var hostMore: TemporaryHost?
 
     /// The sidebar selection is the model's selected computer.
     private var hostSelection: Binding<String?> {
@@ -35,7 +37,14 @@ struct LauncherView: View {
             })
     }
 
+    // Split in two: one modifier chain this long is too much for the type checker
     var body: some View {
+        optionsDialogs(content)
+            .sheet(isPresented: $nav.showWizard) { ControllerWizard() }
+            .onAppear { MNControllerNav.shared.start() }
+    }
+
+    private var content: some View {
         NavigationSplitView {
             ComputersList(selection: hostSelection)
                 .navigationTitle("Computers")
@@ -110,28 +119,41 @@ struct LauncherView: View {
             },
         ])
         .navDialog(model.runningAppChoice.map(runningAppDialog))
-        .navDialog(nav.optionsApp.map(appOptionsDialog))
-        .navDialog(nav.optionsHost.map(hostOptionsDialog))
-        .confirmationDialog(nav.optionsApp?.displayName ?? "",
-                            isPresented: Binding(get: { nav.optionsApp != nil }, set: { if !$0 { nav.optionsApp = nil } }),
-                            titleVisibility: .visible,
-                            presenting: nav.optionsApp) { app in
-            ForEach(appOptionsDialog(app).filter { $0.button != .b }, id: \.title) { action in
-                Button(action.title, action: action.perform)
+    }
+
+    /// X on an app or a computer: its options, on face buttons and as a dialog
+    private func optionsDialogs(_ content: some View) -> some View {
+        content
+            .navDialog(nav.optionsApp.map(appOptionsDialog))
+            .navDialog(nav.optionsHost.map(hostOptionsDialog))
+            .navDialog(hostMore.map(hostMoreDialog))
+            .confirmationDialog(nav.optionsApp?.displayName ?? "",
+                                isPresented: Binding(get: { nav.optionsApp != nil }, set: { if !$0 { nav.optionsApp = nil } }),
+                                titleVisibility: .visible,
+                                presenting: nav.optionsApp) { app in
+                ForEach(appOptionsDialog(app).filter { $0.button != .b }, id: \.title) { action in
+                    Button(action.title, action: action.perform)
+                }
+                Button("Cancel", role: .cancel) {}
             }
-            Button("Cancel", role: .cancel) {}
-        }
-        .confirmationDialog(nav.optionsHost?.name ?? "",
-                            isPresented: Binding(get: { nav.optionsHost != nil }, set: { if !$0 { nav.optionsHost = nil } }),
-                            titleVisibility: .visible,
-                            presenting: nav.optionsHost) { host in
-            ForEach(hostOptionsDialog(host).filter { $0.button != .b }, id: \.title) { action in
-                Button(action.title, role: action.button == .y ? .destructive : nil, action: action.perform)
+            .confirmationDialog(nav.optionsHost?.name ?? "",
+                                isPresented: Binding(get: { nav.optionsHost != nil }, set: { if !$0 { nav.optionsHost = nil } }),
+                                titleVisibility: .visible,
+                                presenting: nav.optionsHost) { host in
+                ForEach(hostOptionsDialog(host).filter { $0.button != .b }, id: \.title) { action in
+                    Button(action.title, action: action.perform)
+                }
+                Button("Cancel", role: .cancel) {}
             }
-            Button("Cancel", role: .cancel) {}
-        }
-        .sheet(isPresented: $nav.showWizard) { ControllerWizard() }
-        .onAppear { MNControllerNav.shared.start() }
+            .confirmationDialog(hostMore?.name ?? "",
+                                isPresented: Binding(get: { hostMore != nil }, set: { if !$0 { hostMore = nil } }),
+                                titleVisibility: .visible,
+                                presenting: hostMore) { host in
+                ForEach(hostMoreDialog(host).filter { $0.button != .b }, id: \.title) { action in
+                    Button(action.title, role: action.button == .y ? .destructive : nil, action: action.perform)
+                }
+                Button("Back", role: .cancel) {}
+            }
     }
 
     /// B on the launcher: back from a computer's apps to the list, when they're pushed (folded).
@@ -201,15 +223,35 @@ struct LauncherView: View {
         }
         return [
             main,
-            NavDialogAction(button: .x, title: "Test Network") {
+            NavDialogAction(button: .x, title: "Computer Details") {
                 nav.optionsHost = nil
+                // A sheet can't come up while the dialog is still going away
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { model.hostDetails = host }
+            },
+            NavDialogAction(button: .y, title: "More…") {
+                nav.optionsHost = nil
+                // One dialog at a time: the second page comes up once the first has gone
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { hostMore = host }
+            },
+            NavDialogAction(button: .b, title: "Cancel") { nav.optionsHost = nil },
+        ]
+    }
+
+    /// Second page: the rarer and destructive actions
+    private func hostMoreDialog(_ host: TemporaryHost) -> [NavDialogAction] {
+        [
+            NavDialogAction(button: .x, title: "Test Network") {
+                hostMore = nil
                 model.testNetwork()
             },
             NavDialogAction(button: .y, title: "Remove Computer") {
-                nav.optionsHost = nil
+                hostMore = nil
                 model.remove(host)
             },
-            NavDialogAction(button: .b, title: "Cancel") { nav.optionsHost = nil },
+            NavDialogAction(button: .b, title: "Back") {
+                hostMore = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { nav.optionsHost = host }
+            },
         ]
     }
 }

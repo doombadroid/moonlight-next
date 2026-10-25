@@ -34,6 +34,12 @@ static __weak ControllerSupport* sControllerSupport;
     LiSendMouseButtonEvent(down ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, button);
 }
 
++ (void) mousePositionX:(short)x y:(short)y width:(short)width height:(short)height {
+    if (width > 0 && height > 0) {
+        LiSendMousePositionEvent(x, y, width, height);
+    }
+}
+
 + (void) scroll:(short)amount {
     if (amount != 0) {
         LiSendHighResScrollEvent(amount);
@@ -109,6 +115,13 @@ static __weak ControllerSupport* sControllerSupport;
     }
     [cs updateLeftStick:controller x:x y:controller.lastLeftStickY];
     [cs updateFinished:controller];
+}
+
++ (void) controllerTouch:(MNControllerTouchPhase)phase pointer:(uint32_t)pointer x:(float)x y:(float)y {
+    Controller* controller = [sControllerSupport getOscController];
+    uint8_t type = phase == MNControllerTouchPhaseDown ? LI_TOUCH_EVENT_DOWN
+                 : phase == MNControllerTouchPhaseUp ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_MOVE;
+    LiSendControllerTouchEvent(controller != nil ? (uint8_t)controller.playerIndex : 0, type, pointer, x, y, 1.0f);
 }
 
 + (void) controllerMotion:(uint8_t)type x:(float)x y:(float)y z:(float)z {

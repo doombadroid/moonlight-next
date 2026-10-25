@@ -27,6 +27,12 @@ typedef NS_ENUM(int, MNMouseButton) {
     MNMouseButtonX2 = 5,   // forward
 };
 
+typedef NS_ENUM(uint8_t, MNControllerTouchPhase) {
+    MNControllerTouchPhaseDown,
+    MNControllerTouchPhaseMove,
+    MNControllerTouchPhaseUp,
+};
+
 @interface MNInput : NSObject
 
 // Set by the stream while it runs (nil when it ends); gamepad calls do nothing without it.
@@ -38,6 +44,8 @@ typedef NS_ENUM(int, MNMouseButton) {
 
 + (void) mouseMoveX:(short)dx y:(short)dy;
 + (void) mouseButton:(MNMouseButton)button down:(BOOL)down;
+// Puts the pointer at (x, y) of a width × height area that stands for the whole host screen.
++ (void) mousePositionX:(short)x y:(short)y width:(short)width height:(short)height;
 // One notch is 120, positive scrolls up.
 + (void) scroll:(short)amount;
 // Horizontal, same units; positive scrolls right.
@@ -50,6 +58,10 @@ typedef NS_ENUM(int, MNMouseButton) {
 + (void) gamepadRightStickX:(short)x y:(short)y;
 + (void) gamepadLeftTrigger:(uint8_t)left;
 + (void) gamepadRightTrigger:(uint8_t)right;
+
+// A finger on player 1's touchpad (DualShock/DualSense; the host needs the pad to report one).
+// x, y run 0...1 from the top left; pointer is 0 or 1.
++ (void) controllerTouch:(MNControllerTouchPhase)phase pointer:(uint32_t)pointer x:(float)x y:(float)y;
 
 // Left stick x only, leaving y to the on-screen stick (gyro steering).
 + (void) gamepadSteerX:(short)x;

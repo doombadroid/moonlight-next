@@ -176,9 +176,19 @@ struct WidgetPickerView: View {
             Section {
                 item("Mouse touchpad", "rectangle.and.hand.point.up.left", MNWidget(kind: .mousePad),
                      note: "Move, tap to click, tap then hold to drag, two fingers scroll")
+                item("Screen pad", "rectangle.dashed", MNWidget(kind: .screenPad),
+                     note: "Stands for the whole host screen: touch points there, tap clicks, hold then move drags")
                 item("Scroll strip", "arrow.up.and.down", MNWidget(kind: .scrollPad), note: "One finger turns the mouse wheel")
+                item("Notched scroll strip", "list.bullet", { var w = MNWidget(kind: .scrollPad); w.notched = true; return w }(),
+                     note: "One wheel notch per stretch of travel, for weapon wheels and lists")
                 item("Touch blocker", "hand.raised.slash", MNWidget(kind: .blocker),
                      note: "Covers a spot so a resting palm doesn't touch the stream")
+            }
+            Section {
+                item("PlayStation touchpad", "hand.point.up.left", MNWidget(kind: .controllerTouchpad),
+                     note: "Up to two fingers on a DualShock or DualSense touchpad")
+            } footer: {
+                Text("Works when Settings › Controller › Emulated controller is PlayStation, on a Windows or Linux host (Sunshine on macOS has no virtual controller). Add a Touchpad click button from Gamepad buttons to click it.")
             }
         }
         .navigationTitle("Touchpads")
@@ -286,8 +296,20 @@ struct WidgetPropertiesView: View {
             case .scrollPad:
                 Section {
                     slider("Speed", bind(\.sensitivity, 1), 0.2...4, format: "%.1f×")
+                    Toggle("Notched", isOn: bind(\.notched, false))
                 } footer: {
-                    Text("Also follows Settings › Touch scroll speed and direction.")
+                    Text(w.notched ? "Turns the wheel one notch at a time, about every 30 pt at speed 1, with a tick for each. Also follows Settings › Touch scroll speed and direction."
+                                   : "Also follows Settings › Touch scroll speed and direction.")
+                }
+            case .screenPad:
+                Section {
+                } footer: {
+                    Text("The pad stands for the host's whole screen: touching a spot puts the pointer on the same spot there. Tap to click; rest a moment, then move to drag. Size it to the screen's shape (16:9 for most).")
+                }
+            case .controllerTouchpad:
+                Section {
+                } footer: {
+                    Text("Sends touches on the virtual controller's touchpad. It needs Settings › Controller › Emulated controller set to PlayStation and a Windows or Linux host; reconnect after changing it.")
                 }
             case .directionPad:
                 directionSection(w)
@@ -301,22 +323,34 @@ struct WidgetPropertiesView: View {
                 }
             case .folder:
                 Section {
-                    Toggle("Starts collapsed", isOn: bind(\.collapsed, false))
+                    Toggle("Peek while held", isOn: bind(\.peek, false))
+                    if !w.peek {
+                        Toggle("Starts collapsed", isOn: bind(\.collapsed, false))
+                    }
                     Picker("Dock to the edge when idle", selection: bind(\.autoDock, 0)) {
                         Text("Off").tag(0.0)
                         ForEach([3.0, 5.0, 10.0, 30.0], id: \.self) { Text("After \(Int($0)) s").tag($0) }
                     }
                 } footer: {
-                    Text("Tap the folder to show or hide what's in it. Put widgets in it from their settings. Moving the folder moves them too. A collapsed folder can slide to the nearest edge after a while; tap the tab to bring it back.")
+                    Text(w.peek ? "What's in the folder shows only while you hold it: slide onto a widget in it and let go to press it. Put widgets in it from their settings; a folder can go in another folder once."
+                                : "Tap the folder to show or hide what's in it. Put widgets in it from their settings; a folder can go in another folder once. Moving the folder moves them too. A collapsed folder can slide to the nearest edge after a while; tap the tab to bring it back.")
                 }
             case .gyroPause, .overlay, .mousePad, .blocker:
                 EmptyView()
             }
-            if w.kind != .folder, !layer.folders.isEmpty {
+            if w.kind.isButtonLike {
+                Section {
+                    Toggle("Movable during play", isOn: bind(\.movable, false))
+                } footer: {
+                    Text("Rest a finger on it for half a second, then drag to move it without the editor. The new spot is saved with the layout.")
+                }
+            }
+            let folders = folderChoices(w)
+            if !folders.isEmpty {
                 Section {
                     Picker("Folder", selection: bind(\.folder, "")) {
                         Text("None").tag("")
-                        ForEach(layer.folders) { f in Text(f.label.isEmpty ? "Folder \(folderNumber(f))" : f.label).tag(f.id) }
+                        ForEach(folders) { f in Text(f.label.isEmpty ? "Folder \(folderNumber(f))" : f.label).tag(f.id) }
                     }
                 }
             }
@@ -331,6 +365,15 @@ struct WidgetPropertiesView: View {
                 }
             }
         }
+    }
+
+    /// Folders this widget can go in. Folders nest one level: a folder can go in a top-level
+    /// folder, as long as it has no folders in it itself.
+    private func folderChoices(_ w: MNWidget) -> [MNWidget] {
+        guard w.kind == .folder else { return layer.folders }
+        let hasSubfolders = layer.folders.contains { $0.folder == w.id }
+        guard !hasSubfolders else { return [] }
+        return layer.folders.filter { $0.id != w.id && $0.folder.isEmpty }
     }
 
     private func folderNumber(_ f: MNWidget) -> Int {
@@ -353,7 +396,7 @@ struct WidgetPropertiesView: View {
             slider("Width", bind(\.w, 56), 24...400, format: "%.0f pt")
             slider("Height", bind(\.h, 56), 24...400, format: "%.0f pt")
             slider("Opacity", bind(\.opacity, 1), 0.1...1, format: "%.0f%%", scale: 100)
-            if w.kind.isButtonLike || w.kind == .directionPad {
+            if w.kind.isButtonLike || w.kind == .directionPad || w.kind == .screenPad {
                 Picker("Haptic", selection: bind(\.haptic, .medium)) {
                     Text("Off").tag(MNWidget.Haptic.off)
                     Text("Light").tag(MNWidget.Haptic.light)
@@ -484,15 +527,24 @@ struct WidgetPropertiesView: View {
             }
             if w.walkKey > 0 {
                 slider("Walk within", bind(\.walkBelow, 30), 16...150, format: "%.0f pt")
+                actionPicker("Walk key action", bind(\.walkToggle, false))
             }
             Picker("Sprint key", selection: bind(\.sprintKey, 0)) {
                 ForEach(WidgetPropertiesView.walkKeys, id: \.1) { Text($0.0).tag($0.1) }
             }
             if w.sprintKey > 0 {
                 slider("Sprint beyond", bind(\.sprintAbove, 80), 30...200, format: "%.0f pt")
+                actionPicker("Sprint key action", bind(\.sprintToggle, false))
             }
         } footer: {
-            Text("Directions come from how far your thumb moves from where it landed. The walk key is held while it stays close, the sprint key once it goes far.")
+            Text("Directions come from how far your thumb moves from where it landed. The walk key is held while it stays close, the sprint key once it goes far. Toggle taps the key as your thumb enters its zone and again as it leaves, for games where that key switches walking or sprinting on and off.")
+        }
+    }
+
+    private func actionPicker(_ title: String, _ toggle: Binding<Bool>) -> some View {
+        Picker(title, selection: toggle) {
+            Text("Hold").tag(false)
+            Text("Toggle").tag(true)
         }
     }
 

@@ -446,6 +446,15 @@
     [items addObject:[[MNQuickMenuItem alloc] initWithTitle:mouseOn ? @"Controller Mouse Off" : @"Controller Mouse"
                                                      symbol:@"cursorarrow.motionlines" destructive:NO
                                                     handler:^{ [MNControllerMouse.shared toggle]; }]];
+    BOOL touchOff = _streamView.touchInputDisabled;
+    [items addObject:[[MNQuickMenuItem alloc] initWithTitle:touchOff ? @"Turn Touch On" : @"Turn Touch Off"
+                                                     symbol:touchOff ? @"hand.point.up.left" : @"hand.raised.slash" destructive:NO
+                                                    handler:^{
+        StreamFrameViewController* s = weakSelf;
+        if (s != nil) {
+            s->_streamView.touchInputDisabled = !touchOff;
+        }
+    }]];
     if (MNGyro.isConfigured) {
         [items addObject:[[MNQuickMenuItem alloc] initWithTitle:MNGyro.isPaused ? @"Resume Gyro" : @"Pause Gyro"
                                                          symbol:@"gyroscope" destructive:NO
@@ -705,6 +714,9 @@ static os_log_t DuoLog(void) {
             break;
         case MNWidgetFunctionStats:
             [self toggleStatsOverlay];
+            break;
+        case MNWidgetFunctionProfiles:
+            [_widgetLayer presentProfilesFrom:self];
             break;
     }
 }

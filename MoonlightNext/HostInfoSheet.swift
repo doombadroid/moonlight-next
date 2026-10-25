@@ -94,6 +94,8 @@ struct HostInfoSheet: View {
         .tint(Theme.accent)
         .preferredColorScheme(.dark)
         .presentationDetents([.medium, .large])
+        // A controller's B closes it (it opens from a computer's options on a controller too)
+        .navScreen(back: { dismiss() })
     }
 
     private func copyRow(_ label: String, _ value: String) -> some View {

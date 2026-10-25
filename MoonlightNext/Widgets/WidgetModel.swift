@@ -3,8 +3,9 @@
 //  MoonLume
 //
 //  On-screen widgets: buttons for any gamepad button, key, mouse button, wheel notch, chord or
-//  macro; touchpads (floating stick, camera pad, trigger strip, WASD pad); gyro buttons; stream
-//  function buttons; folders; and a live diagram of a connected controller.
+//  macro; touchpads (floating stick, camera pad, trigger strip, WASD pad, mouse and screen pads,
+//  scroll strips, a PlayStation touchpad); gyro buttons; stream function buttons; folders (one
+//  level of nesting); and a live diagram of a connected controller.
 //
 //  Widgets are saved inside the on-screen controls layout (per posture, per game, in named
 //  layouts and exported files) under the "widgets" key, as an array of plain dictionaries.
@@ -126,7 +127,7 @@ struct MacroStep: Codable, Equatable, Identifiable {
 /// Stream actions a function button runs (handled by StreamFrameViewController).
 @objc enum MNWidgetFunction: Int, CaseIterable {
     case settings, disconnect, quitApp, pictureInPicture, editControls, softKeyboard, inputDeck,
-         touchToggle, controllerMouse, stats
+         touchToggle, controllerMouse, stats, profiles
 
     var name: String {
         switch self {
@@ -140,6 +141,7 @@ struct MacroStep: Codable, Equatable, Identifiable {
         case .touchToggle: return "Touch On/Off"
         case .controllerMouse: return "Controller Mouse"
         case .stats: return "Stats"
+        case .profiles: return "Layouts"
         }
     }
 
@@ -155,6 +157,7 @@ struct MacroStep: Codable, Equatable, Identifiable {
         case .touchToggle: return "hand.raised.slash"
         case .controllerMouse: return "cursorarrow.motionlines"
         case .stats: return "chart.bar.xaxis"
+        case .profiles: return "square.stack.3d.up"
         }
     }
 
@@ -171,6 +174,7 @@ struct MacroStep: Codable, Equatable, Identifiable {
         case .touchToggle: return "touchToggle"
         case .controllerMouse: return "controllerMouse"
         case .stats: return "stats"
+        case .profiles: return "profiles"
         }
     }
 }
@@ -190,6 +194,8 @@ struct MNWidget: Codable, Equatable, Identifiable {
         case mousePad     // a small trackpad: move, tap to click, two fingers scroll
         case scrollPad    // one finger scrolls the mouse wheel
         case blocker      // takes touches so nothing under it reacts (a resting palm)
+        case controllerTouchpad // a DualShock/DualSense touchpad: up to two fingers, sent as pad touches
+        case screenPad    // stands for the whole host screen: touch points the mouse there (absolute)
 
         var isButtonLike: Bool { self == .button || self == .gyroAim || self == .gyroPause || self == .function || self == .folder }
     }
@@ -214,6 +220,8 @@ struct MNWidget: Codable, Equatable, Identifiable {
     var toggle = false
     /// A finger rolling onto this button from another slide button presses it
     var slide = false
+    /// Button-like widgets: hold still, then drag to move it during play (saved with the layout)
+    var movable = false
     /// Folder this widget is in
     var folder = ""
 
@@ -237,6 +245,11 @@ struct MNWidget: Codable, Equatable, Identifiable {
     /// Walk key below, sprint key above this distance (points from where the thumb landed)
     var walkBelow = 30.0
     var sprintAbove = 80.0
+    /// Tap the walk / sprint key on entering its zone and again on leaving, instead of holding it
+    var walkToggle = false
+    var sprintToggle = false
+    /// Scroll strips: whole wheel notches, one per stretch of travel
+    var notched = false
 
     // Gyro buttons: per-axis factors for aiming while held
     var gyroX = 1.0
@@ -248,6 +261,8 @@ struct MNWidget: Codable, Equatable, Identifiable {
     var collapsed = false
     /// Slide to the nearest edge after this many idle seconds while collapsed (0: never)
     var autoDock = 0.0
+    /// Shows what's in it only while held; letting go over a widget in it presses that widget
+    var peek = false
 
     init(kind: Kind) {
         self.kind = kind
@@ -264,6 +279,10 @@ struct MNWidget: Codable, Equatable, Identifiable {
             w = 56; h = 170; shape = .rounded; haptic = .off
         case .blocker:
             w = 160; h = 110; shape = .rounded; haptic = .off; opacity = 0.3
+        case .controllerTouchpad:
+            w = 220; h = 110; shape = .rounded; haptic = .off
+        case .screenPad:
+            w = 240; h = 135; shape = .rounded; haptic = .light
         case .function, .folder:
             w = 44; h = 44
         default:
@@ -272,9 +291,10 @@ struct MNWidget: Codable, Equatable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, x, y, w, h, opacity, label, symbol, shape, border, haptic, toggle, slide, folder,
+        case id, kind, x, y, w, h, opacity, label, symbol, shape, border, haptic, toggle, slide, movable, folder,
              inputs, macro, turboMs, turboCount, right, sensitivity, inertia, keys, walkKey, sprintKey,
-             walkBelow, sprintAbove, gyroX, gyroY, function, collapsed, autoDock
+             walkBelow, sprintAbove, walkToggle, sprintToggle, notched, gyroX, gyroY, function, collapsed,
+             autoDock, peek
     }
 
     // Saved layouts come from older and newer builds and from imported files: every field is
@@ -306,6 +326,7 @@ struct MNWidget: Codable, Equatable, Identifiable {
         haptic = (try? c.decodeIfPresent(Haptic.self, forKey: .haptic)) ?? haptic
         toggle = bool(.toggle, false)
         slide = bool(.slide, false)
+        movable = bool(.movable, false)
         folder = str(.folder)
         inputs = Array(((try? c.decodeIfPresent([WidgetInput].self, forKey: .inputs)) ?? []).prefix(8))
         macro = Array(((try? c.decodeIfPresent([MacroStep].self, forKey: .macro)) ?? []).prefix(32))
@@ -320,12 +341,16 @@ struct MNWidget: Codable, Equatable, Identifiable {
         sprintKey = int(.sprintKey, 0, 0...0xFE)
         walkBelow = num(.walkBelow, 30, 0...400)
         sprintAbove = num(.sprintAbove, 80, 0...400)
+        walkToggle = bool(.walkToggle, false)
+        sprintToggle = bool(.sprintToggle, false)
+        notched = bool(.notched, false)
         gyroX = num(.gyroX, 1, -5...5)
         gyroY = num(.gyroY, 1, -5...5)
         function = (try? c.decodeIfPresent(String.self, forKey: .function))
             .flatMap { name in MNWidgetFunction.allCases.first { $0.key == name } } ?? .settings
         collapsed = bool(.collapsed, false)
         autoDock = num(.autoDock, 0, 0...120)
+        peek = bool(.peek, false)
     }
 
     // Only what applies to the kind, so saved layouts stay small
@@ -345,6 +370,7 @@ struct MNWidget: Codable, Equatable, Identifiable {
         try c.encode(haptic, forKey: .haptic)
         if toggle { try c.encode(true, forKey: .toggle) }
         if slide { try c.encode(true, forKey: .slide) }
+        if movable { try c.encode(true, forKey: .movable) }
         if !folder.isEmpty { try c.encode(folder, forKey: .folder) }
         switch kind {
         case .button:
@@ -356,6 +382,7 @@ struct MNWidget: Codable, Equatable, Identifiable {
             }
         case .scrollPad:
             try c.encode(sensitivity, forKey: .sensitivity)
+            if notched { try c.encode(true, forKey: .notched) }
         case .stickPad, .cameraPad, .triggerPad:
             try c.encode(right, forKey: .right)
             try c.encode(sensitivity, forKey: .sensitivity)
@@ -366,6 +393,8 @@ struct MNWidget: Codable, Equatable, Identifiable {
             try c.encode(sprintKey, forKey: .sprintKey)
             try c.encode(walkBelow, forKey: .walkBelow)
             try c.encode(sprintAbove, forKey: .sprintAbove)
+            if walkToggle { try c.encode(true, forKey: .walkToggle) }
+            if sprintToggle { try c.encode(true, forKey: .sprintToggle) }
         case .gyroAim:
             try c.encode(gyroX, forKey: .gyroX)
             try c.encode(gyroY, forKey: .gyroY)
@@ -374,7 +403,8 @@ struct MNWidget: Codable, Equatable, Identifiable {
         case .folder:
             try c.encode(collapsed, forKey: .collapsed)
             try c.encode(autoDock, forKey: .autoDock)
-        case .gyroPause, .overlay, .mousePad, .blocker:
+            if peek { try c.encode(true, forKey: .peek) }
+        case .gyroPause, .overlay, .mousePad, .blocker, .controllerTouchpad, .screenPad:
             break
         }
     }
@@ -398,6 +428,8 @@ struct MNWidget: Codable, Equatable, Identifiable {
         case .mousePad: return "Touchpad"
         case .scrollPad: return "Scroll"
         case .blocker: return "Blocker"
+        case .controllerTouchpad: return "PS touchpad"
+        case .screenPad: return "Screen"
         }
     }
 

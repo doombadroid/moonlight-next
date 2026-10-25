@@ -61,7 +61,8 @@ final class WidgetView: UIView {
         icon.isHidden = image == nil || widget.kind == .overlay
         label.isHidden = !icon.isHidden || widget.kind == .overlay
         label.text = widget.title
-        isPad = [.stickPad, .cameraPad, .triggerPad, .directionPad, .mousePad, .scrollPad, .blocker].contains(widget.kind)
+        isPad = [.stickPad, .cameraPad, .triggerPad, .directionPad, .mousePad, .scrollPad, .blocker,
+                 .controllerTouchpad, .screenPad].contains(widget.kind)
         if widget.kind == .overlay, diagram == nil {
             let view = PadDiagramView(frame: bounds)
             view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
