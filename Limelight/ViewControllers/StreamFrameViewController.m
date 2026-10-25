@@ -335,6 +335,13 @@
                                                 identifier:nil
                                                    handler:^(UIAction* action) { MNGyro.isPaused = !MNGyro.isPaused; }]];
         }
+        if (MNControllerMouse.hasController) {
+            BOOL mouseOn = MNControllerMouse.shared.isOn;
+            [gyroItems addObject:[UIAction actionWithTitle:mouseOn ? @"Controller Mouse Off" : @"Controller Mouse"
+                                                     image:[UIImage systemImageNamed:@"cursorarrow.motionlines"]
+                                                identifier:nil
+                                                   handler:^(UIAction* action) { [MNControllerMouse.shared toggle]; }]];
+        }
         if ([strongSelf->_streamView visibleOnScreenControls] != nil) {
             [gyroItems addObject:[UIAction actionWithTitle:@"Edit Controls"
                                                      image:[UIImage systemImageNamed:@"arrow.up.and.down.and.arrow.left.and.right"]
@@ -609,6 +616,7 @@ static os_log_t DuoLog(void) {
 #if !TARGET_OS_TV
     [MNGyro.shared stop];
     [MNPhoneRumble.shared stop];
+    [MNControllerMouse.shared stop];
     [MNInput setControllerSupport:nil];
 #endif
 
@@ -999,6 +1007,12 @@ static os_log_t DuoLog(void) {
     Log(LOG_I, @"Set controller LED on gamepad %d: l%02x%02x%02x", controllerNumber, r, g, b);
     
     [_controllerSupport setControllerLed:controllerNumber r:r g:g b:b];
+}
+
+- (void) setAdaptiveTriggers:(uint16_t)controllerNumber eventFlags:(uint8_t)eventFlags typeLeft:(uint8_t)typeLeft typeRight:(uint8_t)typeRight left:(const uint8_t*)left right:(const uint8_t*)right {
+    Log(LOG_I, @"Set adaptive triggers on gamepad %d: flags %02x types %02x %02x", controllerNumber, eventFlags, typeLeft, typeRight);
+
+    [_controllerSupport setAdaptiveTriggers:controllerNumber eventFlags:eventFlags typeLeft:typeLeft typeRight:typeRight left:left right:right];
 }
 
 - (void)connectionStatusUpdate:(int)status {

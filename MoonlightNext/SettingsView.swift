@@ -167,12 +167,7 @@ struct SettingsView: View {
     /// Read by the input deck and the on-screen controls on every press.
     @AppStorage("mnHapticsEnabled") private var hapticsEnabled = true
     @AppStorage("mnTrackpadSpeed") private var trackpadSpeed = 2.0
-    @AppStorage("mnPhoneRumble") private var phoneRumble = true
     @AppStorage("mnPictureInPicture") private var pictureInPicture = true
-    @AppStorage(GyroSettings.modeKey) private var gyroMode = GyroSettings.Mode.off.rawValue
-    @AppStorage(GyroSettings.activationKey) private var gyroActivation = GyroSettings.Activation.always.rawValue
-    @AppStorage(GyroSettings.sensitivityKey) private var gyroSensitivity = 1.5
-    @AppStorage(GyroSettings.invertYKey) private var gyroInvertY = false
 
     var body: some View {
         NavigationStack {
@@ -246,7 +241,6 @@ struct SettingsView: View {
                     Toggle("Swap A/B and X/Y", isOn: $store.swapABXYButtons)
                     Toggle("Citrix X1 mouse", isOn: $store.btMouseSupport)
                     Toggle("Haptics on button presses", isOn: $hapticsEnabled)
-                    Toggle("Phone rumble without a controller", isOn: $phoneRumble)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Trackpad speed")
@@ -259,36 +253,7 @@ struct SettingsView: View {
                     Theme.label("Input")
                 }
 
-                Section {
-                    choice("Gyro aiming") {
-                        Picker("Gyro aiming", selection: $gyroMode) {
-                            Text("Off").tag(GyroSettings.Mode.off.rawValue)
-                            Text("Mouse").tag(GyroSettings.Mode.mouse.rawValue)
-                            Text("Right stick").tag(GyroSettings.Mode.rightStick.rawValue)
-                        }
-                    }
-                    if gyroMode != GyroSettings.Mode.off.rawValue {
-                        choice("Active") {
-                            Picker("Active", selection: $gyroActivation) {
-                                Text("Always").tag(GyroSettings.Activation.always.rawValue)
-                                Text("While L2 is held").tag(GyroSettings.Activation.whileAiming.rawValue)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Sensitivity")
-                                Spacer()
-                                Text(String(format: "%.2g×", gyroSensitivity)).foregroundStyle(Theme.muted)
-                            }
-                            Slider(value: $gyroSensitivity, in: 0.25...4, step: 0.25)
-                        }
-                        Toggle("Invert up/down", isOn: $gyroInvertY)
-                    }
-                } header: {
-                    Theme.label("Gyro")
-                } footer: {
-                    Text("Turn the phone to aim. Mouse suits most PC games and the desktop; right stick suits games that only take a controller. Pause it from the ••• menu while streaming.")
-                }
+                ControllerSettingsSections()
 
                 Section {
                     Toggle("Optimize game settings", isOn: $store.optimizeGames)

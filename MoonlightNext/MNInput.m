@@ -95,6 +95,26 @@ static __weak ControllerSupport* sControllerSupport;
     [cs updateFinished:controller];
 }
 
++ (void) horizontalScroll:(short)amount {
+    if (amount != 0) {
+        LiSendHighResHScrollEvent(amount);
+    }
+}
+
++ (void) gamepadSteerX:(short)x {
+    ControllerSupport* cs = sControllerSupport;
+    Controller* controller = [cs getOscController];
+    if (controller == nil) {
+        return;
+    }
+    [cs updateLeftStick:controller x:x y:controller.lastLeftStickY];
+    [cs updateFinished:controller];
+}
+
++ (void) controllerMotion:(uint8_t)type x:(float)x y:(float)y z:(float)z {
+    LiSendControllerMotionEvent(0, type, x, y, z);
+}
+
 + (BOOL) aimTriggerHeld {
     return [sControllerSupport getOscController].lastLeftTrigger > 64;
 }
