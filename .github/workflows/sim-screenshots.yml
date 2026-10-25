@@ -140,6 +140,7 @@ jobs:
       - name: App log
         if: always()
         run: |
+          [ -n "$UDID" ] && cp "$(xcrun simctl get_app_container "$UDID" com.doombadroid.moonlume data)/Documents/kbdiag.txt" "$RUNNER_TEMP/shots/" || true
           [ -n "$UDID" ] && xcrun simctl spawn "$UDID" log show --last 15m --predicate 'process == "Moonlight"' --style compact > "$RUNNER_TEMP/shots/app.log" || true
 
       - uses: actions/upload-artifact@v4

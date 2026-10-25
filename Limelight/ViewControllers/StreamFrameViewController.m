@@ -45,6 +45,25 @@
 @end
 #endif
 
+#if !TARGET_OS_TV // TEMP keyboard diagnostic (demo mode only)
+static __weak id mnFirstResponder;
+@interface UIResponder (MNKBDiag)
+- (void)mn_findFirstResponder:(id)sender;
+@end
+@implementation UIResponder (MNKBDiag)
+- (void)mn_findFirstResponder:(id)sender { mnFirstResponder = self; }
+@end
+static void MNKBDiag(NSString* what) {
+    mnFirstResponder = nil;
+    [[UIApplication sharedApplication] sendAction:@selector(mn_findFirstResponder:) to:nil from:nil forEvent:nil];
+    NSString* line = [NSString stringWithFormat:@"%@ | first=%@ | %@\n\n", what, mnFirstResponder, [[NSThread callStackSymbols] componentsJoinedByString:@"\n"]];
+    NSString* path = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"kbdiag.txt"];
+    NSFileHandle* fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (fh == nil) { [line writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:nil]; return; }
+    [fh seekToEndOfFile]; [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]]; [fh closeFile];
+}
+#endif
+
 @implementation StreamFrameViewController {
     ControllerSupport *_controllerSupport;
     StreamManager *_streamMan;
@@ -242,6 +261,11 @@
         still.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         still.layer.zPosition = -1; // under the on-screen controls' layers
         [_streamView insertSubview:still atIndex:0];
+        for (NSNotificationName name in @[UIKeyboardWillShowNotification, UITextFieldTextDidBeginEditingNotification, UITextViewTextDidBeginEditingNotification]) {
+            [[NSNotificationCenter defaultCenter] addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification* n) {
+                MNKBDiag([NSString stringWithFormat:@"%@ object=%@", n.name, n.object]);
+            }];
+        }
     }
     else
 #endif
@@ -394,6 +418,7 @@
 
     __weak StreamFrameViewController* weakSelf = self;
     _menuProvider = ^(void (^completion)(NSArray<UIMenuElement*>*)) {
+        if (MNDemo.isOn) { MNKBDiag(@"menu provider"); }
         StreamFrameViewController* strongSelf = weakSelf;
         if (strongSelf == nil) {
             completion(@[]);
