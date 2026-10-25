@@ -55,5 +55,15 @@ struct PillButtonStyle: ButtonStyle {
                 Capsule().strokeBorder(primary ? Color.clear : Color(hex: 0x2A2A30))
             }
             .opacity(configuration.isPressed ? 0.7 : 1)
+            .modifier(DimmedWhenDisabled())
+    }
+}
+
+/// A disabled pill (Undo with nothing to undo) has to look it: the style's own colours hide it.
+private struct DimmedWhenDisabled: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        content.opacity(isEnabled ? 1 : 0.35)
     }
 }

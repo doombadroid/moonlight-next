@@ -341,6 +341,14 @@
     _menuButton.frame = CGRectMake(bounds.size.width - safe.right - 16 - 44, safe.top + 10, 44, 44);
     [self.view bringSubviewToFront:_menuButton];
     MNQuickMenu.shared.wheelArea = [self.view convertRect:bounds toView:nil];
+    if (_layoutEditorBar != nil) {
+        // The bar (Save, Cancel) stays on the stream: moved to the bottom it would sit under the deck
+        CGFloat overDeck = CGRectIsNull(deckFrame) ? 0 : MAX(0, CGRectGetMaxY(fullBounds) - self.view.safeAreaInsets.bottom - CGRectGetMaxY(bounds));
+        if (_layoutEditorBarBottom.constant != -(8 + overDeck)) {
+            _layoutEditorBarBottom.constant = -(8 + overDeck);
+        }
+        [self.view bringSubviewToFront:_layoutEditorBar.view];
+    }
 #endif
 }
 
