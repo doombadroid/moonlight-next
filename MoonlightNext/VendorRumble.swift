@@ -63,9 +63,14 @@ import GameController
     /// Between a stream's start and its stop (main thread); levels queued after the stop are dropped
     private var active = false
 
+    /// The pad's entry, only while its accessory is connected: a matching name alone (other Kishi
+    /// models, or no session to be had) would swallow rumble GameController could still play.
     private static func pad(for controller: GCController?) -> Pad? {
-        guard let vendor = controller?.vendorName else { return nil }
-        return pads.first { $0.vendorMatch(vendor) }
+        guard let vendor = controller?.vendorName, let pad = pads.first(where: { $0.vendorMatch(vendor) }) else { return nil }
+        let connected = EAAccessoryManager.shared().connectedAccessories.contains {
+            $0.isConnected && $0.protocolStrings.contains(pad.accessoryProtocol) && pad.accessoryMatch($0)
+        }
+        return connected ? pad : nil
     }
 
     @objc(handles:) func handles(_ controller: GCController?) -> Bool {

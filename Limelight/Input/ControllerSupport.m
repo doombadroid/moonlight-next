@@ -153,6 +153,12 @@ static void LiftStick(short* x, short* y, double minimum)
         // No connected controller for this player
         return;
     }
+#if !TARGET_OS_TV
+    if ([MNRumble routeForPlayer:controllerNumber hasController:YES] == MNRumbleRouteNone) {
+        // Settings › Rumble › Off covers the triggers' motors too
+        leftTrigger = rightTrigger = 0;
+    }
+#endif
     
     [controller.leftTriggerMotor setMotorAmplitude:leftTrigger];
     [controller.rightTriggerMotor setMotorAmplitude:rightTrigger];
