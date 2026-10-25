@@ -105,7 +105,7 @@ jobs:
           # A connected hardware keyboard keeps the software keyboard away: headless, it came
           # up whenever the stream's ••• menu opened. Simulator.app applies the setting.
           defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool true
-          open -a Simulator --args -CurrentDeviceUDID "$udid"
+          open "$(xcode-select -p)/Applications/Simulator.app" --args -CurrentDeviceUDID "$udid" || echo "::warning::Simulator.app did not open"
           xcrun simctl bootstatus "$udid" -b
           xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
           xcrun simctl ui "$udid" appearance dark
