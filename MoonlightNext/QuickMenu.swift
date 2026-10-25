@@ -92,6 +92,8 @@ enum QuickMenuGeometry {
     private var tap: Int32 = 0
     private var shown: [MNQuickMenuItem] = []
     private var selection: Int?
+    /// The stream's area in window coordinates (the top half in tabletop), where the wheel is centred
+    @objc var wheelArea = CGRect.null
 
     private override init() {
         super.init()
@@ -122,6 +124,7 @@ enum QuickMenuGeometry {
         close()
         phase = .idle
         items = nil
+        wheelArea = .null
         MNControllerNav.shared.streamController = nil
     }
 
@@ -264,6 +267,7 @@ enum QuickMenuGeometry {
         let nav = MNControllerNav.shared
         nav.installOverlay(in: window)
         nav.overlay.wheelSelection = nil
+        nav.overlay.wheelArea = wheelArea.isNull || wheelArea.isEmpty ? nil : wheelArea
         nav.overlay.wheelHints = [
             NavHint(symbol: MNControllerNav.symbol(for: .a, pad: pad), label: "Choose"),
             NavHint(symbol: MNControllerNav.symbol(for: .b, pad: pad), label: "Cancel"),

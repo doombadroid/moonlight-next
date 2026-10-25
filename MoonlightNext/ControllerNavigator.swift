@@ -99,6 +99,8 @@ final class NavOverlayModel: ObservableObject {
     @Published var wheel: [MNQuickMenuItem]?
     @Published var wheelSelection: Int?
     @Published var wheelHints: [NavHint] = []
+    /// Where to centre the wheel (window coordinates); the whole window when nil
+    @Published var wheelArea: CGRect?
 }
 
 private struct NavOverlayView: View {
@@ -117,7 +119,13 @@ private struct NavOverlayView: View {
             }
             if let wheel = model.wheel {
                 Color.black.opacity(0.35)
-                QuickMenuWheel(items: wheel, selection: model.wheelSelection, hints: model.wheelHints)
+                let menu = QuickMenuWheel(items: wheel, selection: model.wheelSelection, hints: model.wheelHints)
+                if let area = model.wheelArea {
+                    // Off the fold in tabletop: centred on the stream above it
+                    menu.position(x: area.midX, y: area.midY)
+                } else {
+                    menu
+                }
             }
         }
         .ignoresSafeArea()

@@ -334,6 +334,7 @@
     UIEdgeInsets safe = [OnScreenControls obstructedInsetsForView:self.view];
     _menuButton.frame = CGRectMake(bounds.size.width - safe.right - 16 - 44, safe.top + 10, 44, 44);
     [self.view bringSubviewToFront:_menuButton];
+    MNQuickMenu.shared.wheelArea = [self.view convertRect:bounds toView:nil];
 #endif
 }
 
