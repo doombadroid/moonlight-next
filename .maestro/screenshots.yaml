@@ -117,6 +117,15 @@ appId: com.doombadroid.moonlume
     centerElement: true
     speed: 40
     timeout: 150000
+# Centering leaves the header under the search bar: drag it down into view, slowly (no fling)
+- swipe:
+    start: "50%,35%"
+    end: "50%,62%"
+    duration: 1500
+# Gyro aiming on (Mouse) shows the rest of its settings
+- tapOn:
+    text: "Mouse"
+    optional: true
 - waitForAnimationToEnd:
     timeout: 2000
 - takeScreenshot: 06-settings-gyro
