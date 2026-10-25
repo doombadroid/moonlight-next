@@ -35,7 +35,7 @@ appId: com.doombadroid.moonlume
 - takeScreenshot: 02-stream-land
 
 - tapOn:
-    point: "88%,8%"
+    point: "92%,88%"
 - extendedWaitUntil:
     visible: "Disconnect"
     timeout: 10000
@@ -43,7 +43,8 @@ appId: com.doombadroid.moonlume
     timeout: 2000
 - takeScreenshot: 03-stream-menu-land
 
-# The ••• menu button isn't in the XCTest hierarchy: it's tapped where it is (top right).
+# The ••• menu button isn't in the XCTest hierarchy: it's tapped where it is. Points are
+# percentages of the portrait screen (the simulator stays portrait; the stream turns its UI).
 # Edit Controls, then the widget picker
 - tapOn: "Edit Controls"
 - extendedWaitUntil:
@@ -71,7 +72,7 @@ appId: com.doombadroid.moonlume
 
 # The keyboard & trackpad input deck
 - tapOn:
-    point: "88%,8%"
+    point: "92%,88%"
 - tapOn: "Keyboard & Trackpad"
 - waitForAnimationToEnd:
     timeout: 3000
@@ -79,7 +80,7 @@ appId: com.doombadroid.moonlume
 
 # Back to the launcher, then Settings (portrait): Controller and Gyro
 - tapOn:
-    point: "88%,8%"
+    point: "92%,88%"
 - tapOn: "Disconnect"
 - extendedWaitUntil:
     visible: "NOW RUNNING"

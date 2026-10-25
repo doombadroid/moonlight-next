@@ -125,7 +125,7 @@ jobs:
           # Maestro saves takeScreenshot files in the working directory or in its test folder.
           # The simulator captures portrait framebuffers: *-land shots are turned to landscape.
           mkdir -p "$RUNNER_TEMP/appstore"
-          { ls "$RUNNER_TEMP"/shots/*.png; find ~/.maestro/tests -path '*takeScreenshot*' -name '*.png'; } 2>/dev/null \
+          { find "$RUNNER_TEMP/shots" -maxdepth 1 -name '*.png'; find ~/.maestro/tests -path '*takeScreenshot*' -name '*.png'; } \
             | while read -r f; do cp "$f" "$RUNNER_TEMP/appstore/"; done
           cd "$RUNNER_TEMP/appstore"
           for f in *.png; do
