@@ -271,7 +271,8 @@ enum GyroSettings {
         let downPt = window.convert(CGPoint(x: 0, y: 100), to: screen.fixedCoordinateSpace)
         let g = device.gravity, r = device.rotationRate
         let axes = screenAxes()
-        Self.axesLog.info("axes orient=\(scene.interfaceOrientation.rawValue) win=\(Int(window.bounds.width))x\(Int(window.bounds.height)) fixed=\(Int(screen.fixedCoordinateSpace.bounds.width))x\(Int(screen.fixedCoordinateSpace.bounds.height)) native=\(Int(screen.nativeBounds.width))x\(Int(screen.nativeBounds.height)) rightInFixed=(\(Int(rightPt.x - origin.x)),\(Int(rightPt.y - origin.y))) downInFixed=(\(Int(downPt.x - origin.x)),\(Int(downPt.y - origin.y))) mappedRight=(\(axes.right.x),\(axes.right.y)) g=(\(String(format: "%.2f,%.2f,%.2f", g.x, g.y, g.z))) r=(\(String(format: "%.2f,%.2f,%.2f", r.x, r.y, r.z)))", privacy: .public)
+        let message = "axes orient=\(scene.interfaceOrientation.rawValue) win=\(Int(window.bounds.width))x\(Int(window.bounds.height)) fixed=\(Int(screen.fixedCoordinateSpace.bounds.width))x\(Int(screen.fixedCoordinateSpace.bounds.height)) native=\(Int(screen.nativeBounds.width))x\(Int(screen.nativeBounds.height)) rightInFixed=(\(Int(rightPt.x - origin.x)),\(Int(rightPt.y - origin.y))) downInFixed=(\(Int(downPt.x - origin.x)),\(Int(downPt.y - origin.y))) mappedRight=(\(axes.right.x),\(axes.right.y)) g=(\(String(format: "%.2f,%.2f,%.2f", g.x, g.y, g.z))) r=(\(String(format: "%.2f,%.2f,%.2f", r.x, r.y, r.z)))"
+        Self.axesLog.info("\(message, privacy: .public)")
     }
 
     // MARK: Host motion
