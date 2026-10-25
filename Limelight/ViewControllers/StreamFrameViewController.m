@@ -157,10 +157,16 @@
     [MNPhoneRumble.shared start];
     [MNVendorRumble.shared start];
     [MNGyro.shared startIn:self.view];
+    // Nothing from an earlier stream's background state carries over
+    MNAudio.backgroundMuted = NO;
     __weak StreamFrameViewController* weakSelf = self;
     MNPictureInPicture.shared.onClosedInBackground = ^{
         Log(LOG_I, @"Picture in picture closed in the background, ending stream");
         [weakSelf returnToMainFrame];
+    };
+    // No window was shown: the background keep-alive setting decides, as without PiP
+    MNPictureInPicture.shared.onFailedInBackground = ^{
+        [weakSelf backgroundWithoutPictureInPicture];
     };
     // Holding the quick menu button on a controller shows these as a wheel
     [MNQuickMenu.shared attach:self items:^NSArray<MNQuickMenuItem*>* {
@@ -675,6 +681,7 @@ static os_log_t DuoLog(void) {
         if (strongSelf != nil) {
             [strongSelf->_streamView reloadOnScreenControlsLevel];
             strongSelf->_exitSwipeRecognizer.enabled = MNTouchPrefs.edgeSwipeDisconnects || MNTouchPrefs.edgeSwipeOpensMenu;
+            [MNPictureInPicture.shared settingChanged];
         }
     }];
     sheet.modalPresentationStyle = UIModalPresentationFormSheet;
@@ -796,6 +803,9 @@ static os_log_t DuoLog(void) {
     [MNInput setControllerSupport:nil];
     [MNExternalDisplay.shared streamEnded];
     MNAudio.backgroundMuted = NO;
+    // Here, not in the renderer's late async detach, which could clear the next stream's
+    MNPictureInPicture.shared.onClosedInBackground = nil;
+    MNPictureInPicture.shared.onFailedInBackground = nil;
 #endif
 
     [_controllerSupport cleanup];
@@ -1022,6 +1032,10 @@ static os_log_t DuoLog(void) {
 // Settings (audio background mode keeps the app running, muted if asked), else end now.
 // Adapted from VoidLink (GPLv3), StreamFrameViewController.m (background session timer).
 - (void)backgroundWithoutPictureInPicture {
+    if (_tornDown) {
+        // A late background check (or PiP failure) after the stream already ended
+        return;
+    }
     NSInteger minutes = MNAudio.backgroundMinutes;
     if (minutes <= 0) {
         Log(LOG_I, @"Terminating stream for backgrounding");
@@ -1101,6 +1115,11 @@ static os_log_t DuoLog(void) {
 - (void) connectionStarted {
     Log(LOG_I, @"Connection started");
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (self->_tornDown) {
+            // Disconnected as the connection came up: nothing here may start (external display
+            // routing, the stats timer that would keep this controller alive)
+            return;
+        }
         // Leave the spinner spinning until it's obscured by
         // the first frame of video.
         self->_stageLabel.hidden = YES;
@@ -1114,9 +1133,7 @@ static os_log_t DuoLog(void) {
         
         [self->_controllerSupport connectionEstablished];
 #if !TARGET_OS_TV
-        if (!self->_tornDown) {
-            [MNDummyInput startWithFps:self->_settings.framerate.intValue];
-        }
+        [MNDummyInput startWithFps:self->_settings.framerate.intValue];
 #endif
         
         if (self->_settings.statsOverlay) {
@@ -1127,6 +1144,19 @@ static os_log_t DuoLog(void) {
                                                                       repeats:YES];
         }
     });
+}
+
+// A sheet over the stream (Settings, widget profiles) would make UIKit refuse the alert, leaving
+// a frozen stream with no way out but finding Disconnect: close the sheet first
+- (void)presentStreamAlert:(UIAlertController*)alert {
+    if (self.presentedViewController != nil) {
+        [self dismissViewControllerAnimated:NO completion:^{
+            [self presentViewController:alert animated:YES completion:nil];
+        }];
+    }
+    else {
+        [self presentViewController:alert animated:YES completion:nil];
+    }
 }
 
 - (void)connectionTerminated:(int)errorCode {
@@ -1208,7 +1238,7 @@ static os_log_t DuoLog(void) {
         [conTermAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action){
             [self returnToMainFrame];
         }]];
-        [self presentViewController:conTermAlert animated:YES completion:nil];
+        [self presentStreamAlert:conTermAlert];
     });
 
     [_streamMan stopStream];
@@ -1279,7 +1309,7 @@ static os_log_t DuoLog(void) {
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action){
             [self returnToMainFrame];
         }]];
-        [self presentViewController:alert animated:YES completion:nil];
+        [self presentStreamAlert:alert];
     });
     
     [_streamMan stopStream];
@@ -1299,7 +1329,7 @@ static os_log_t DuoLog(void) {
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action){
             [self returnToMainFrame];
         }]];
-        [self presentViewController:alert animated:YES completion:nil];
+        [self presentStreamAlert:alert];
     });
 }
 

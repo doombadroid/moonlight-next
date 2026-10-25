@@ -24,8 +24,11 @@ import os
 
     /// Pulls pending frames into the display layer; set by the renderer.
     @objc var pump: (() -> Void)?
-    /// Called on the main thread when PiP is closed while the app is in the background.
+    /// Called on the main thread when PiP is closed while the app is in the background. Set and
+    /// cleared by the stream on the main thread.
     @objc var onClosedInBackground: (() -> Void)?
+    /// Called on the main thread when PiP fails to start while the app is in the background.
+    @objc var onFailedInBackground: (() -> Void)?
 
     /// True from the moment PiP starts opening until it has fully closed.
     @objc private(set) var isActive = false
@@ -71,13 +74,17 @@ import os
         controller?.startPictureInPicture()
     }
 
+    /// Settings › Picture in picture changed mid-stream: arm or disarm the automatic start.
+    @objc func settingChanged() {
+        controller?.canStartPictureInPictureAutomaticallyFromInline = MNPictureInPicture.enabled
+    }
+
     /// Called when the stream ends.
     @objc func detach() {
         DispatchQueue.main.async { self.detachOnMain() }
     }
 
     private func detachOnMain() {
-        onClosedInBackground = nil // the stream is already ending
         controller?.stopPictureInPicture()
         stopPump()
         possibleObservation = nil
@@ -102,6 +109,8 @@ import os
 
 extension MNPictureInPicture: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerWillStartPictureInPicture(_ c: AVPictureInPictureController) {
+        // A controller detached with an earlier stream may still report in
+        guard c === controller else { return }
         log.info("PiP starting")
         isActive = true
         restoring = false
@@ -109,10 +118,11 @@ extension MNPictureInPicture: AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureController(_ c: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
+        guard c === controller else { return }
         log.error("PiP failed: \(error.localizedDescription)")
         isActive = false
         stopPump()
-        if UIApplication.shared.applicationState == .background { onClosedInBackground?() }
+        if UIApplication.shared.applicationState == .background { onFailedInBackground?() }
     }
 
     func pictureInPictureController(_ c: AVPictureInPictureController,
@@ -122,6 +132,7 @@ extension MNPictureInPicture: AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ c: AVPictureInPictureController) {
+        guard c === controller else { return }
         log.info("PiP stopped, restoring: \(self.restoring)")
         isActive = false
         stopPump()
