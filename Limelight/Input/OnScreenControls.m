@@ -494,9 +494,17 @@ static const CGFloat CAMERA_KEEPOUT_RADIUS = 30;
     }
 }
 
+// Judged on the whole screen: the inset control area of a phone in landscape (Dynamic Island
+// insets on both sides, edge strips) is squarer than 1.8 too, and the square layout, which runs
+// to the screen edges, would put L1 and the D-pad under the island
+- (BOOL) isSquare {
+    CGSize screen = _view.bounds.size;
+    return screen.height > 0 && screen.width / screen.height < 1.8;
+}
+
 - (void) setupComplexControls
 {
-    if (!_iPad && _controlArea.size.height > 0 && _controlArea.size.width / _controlArea.size.height < 1.8) {
+    if (!_iPad && [self isSquare]) {
         [self setupSquareControls];
         return;
     }
@@ -976,8 +984,7 @@ static id MNEntryFromStyle(MNControlStyle s) {
     if (_iPad) {
         return @"roomy";
     }
-    BOOL square = _controlArea.size.height > 0 && _controlArea.size.width / _controlArea.size.height < 1.8;
-    return square ? @"square" : @"wide";
+    return [self isSquare] ? @"square" : @"wide";
 }
 
 - (NSString*) layoutKeyForApp:(NSString*)appID {

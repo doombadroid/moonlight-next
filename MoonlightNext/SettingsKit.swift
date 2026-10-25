@@ -95,6 +95,7 @@ struct SettingsSection<Content: View, Footer: View>: View {
             } footer: {
                 if isOpen { footer }
             }
+            .id(id)
         }
     }
 

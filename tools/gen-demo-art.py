@@ -40,9 +40,10 @@ TEXT = (0xF2, 0xF2, 0xF2)
 # app name -> (asset suffix, motif, tint)
 APPS = {
     "Desktop": ("Desktop", "desktop", (0x8A, 0xB4, 0xFF)),
-    "SuperTuxKart": ("SuperTuxKart", "track", (0xFF, 0xB8, 0x6B)),
-    "Xonotic": ("Xonotic", "reticle", (0x7D, 0xE3, 0xC8)),
-    "0 A.D.": ("0AD", "sun", (0xF0, 0xC8, 0x7A)),
+    # Made-up titles: no real game's name in store screenshots
+    "Duskline Rally": ("DusklineRally", "track", (0xFF, 0xB8, 0x6B)),
+    "Prism Arena": ("PrismArena", "reticle", (0x7D, 0xE3, 0xC8)),
+    "Ember Ages": ("EmberAges", "sun", (0xF0, 0xC8, 0x7A)),
 }
 
 

@@ -243,31 +243,39 @@ struct SettingsView: View {
     }
 
     private func form(wide: Bool) -> some View {
-        Form {
-            if !query.isEmpty {
-                Section {
-                    allSections.environment(\.settingsMode, .search(query))
-                } header: {
-                    Theme.label("Results")
-                } footer: {
-                    Text("Settings whose name or tip mentions \u{201C}\(query)\u{201D}.")
-                }
-            } else if wide {
-                if let page = pages.first(where: { $0.id == selectedPage }) {
-                    page.content.environment(\.settingsMode, .page)
+        ScrollViewReader { proxy in
+            Form {
+                if !query.isEmpty {
+                    Section {
+                        allSections.environment(\.settingsMode, .search(query))
+                    } header: {
+                        Theme.label("Results")
+                    } footer: {
+                        Text("Settings whose name or tip mentions \u{201C}\(query)\u{201D}.")
+                    }
+                } else if wide {
+                    if let page = pages.first(where: { $0.id == selectedPage }) {
+                        page.content.environment(\.settingsMode, .page)
+                    } else {
+                        favoritesSection.environment(\.settingsMode, .page)
+                    }
                 } else {
-                    favoritesSection.environment(\.settingsMode, .page)
+                    favoritesSection
+                    allSections
+                    Section {
+                        aboutRow(pane: 1)
+                    }
                 }
-            } else {
-                favoritesSection
-                allSections
-                Section {
-                    aboutRow(pane: 1)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Theme.ground)
+            .onAppear {
+                // Demo screenshots: open with one section's header at the top
+                if !wide, let anchor = MNDemo.settingsAnchor {
+                    DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
                 }
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(Theme.ground)
     }
 
     private var allSections: some View {

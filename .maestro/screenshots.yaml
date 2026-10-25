@@ -7,6 +7,8 @@ appId: com.doombadroid.moonlume
     clearState: true
     arguments:
       MNDemoMode: "YES"
+      # Settings opens with the Gyro header at the top (demo mode only)
+      MNDemoSettingsAnchor: gyro
 # A cold launch can take a while on the CI simulator.
 - extendedWaitUntil:
     visible: "Gaming PC"
@@ -111,17 +113,9 @@ appId: com.doombadroid.moonlume
 - tapOn:
     text: "Continue"
     optional: true
-- scrollUntilVisible:
-    element: "GYRO"
-    direction: DOWN
-    centerElement: true
-    speed: 40
-    timeout: 150000
-# Centering leaves the header under the search bar: drag it down into view, slowly (no fling)
-- swipe:
-    start: "50%,35%"
-    end: "50%,62%"
-    duration: 1500
+- extendedWaitUntil:
+    visible: "GYRO"
+    timeout: 10000
 # Gyro aiming on (Mouse) shows the rest of its settings
 - tapOn:
     text: "Mouse"

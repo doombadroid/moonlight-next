@@ -37,8 +37,10 @@ jobs:
         if: inputs.app_run != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          APP_RUN: ${{ inputs.app_run }}
         run: |
-          gh run download "${{ inputs.app_run }}" -n moonlume-sim-app -D "$RUNNER_TEMP/app"
+          [[ "$APP_RUN" =~ ^[0-9]+$ ]] || { echo "::error::app_run must be a run id (digits), got: $APP_RUN"; exit 1; }
+          gh run download "$APP_RUN" -n moonlume-sim-app -D "$RUNNER_TEMP/app"
           cd "$RUNNER_TEMP/app" && unzip -q Moonlight.app.zip
           echo "APP=$RUNNER_TEMP/app/Moonlight.app" >> "$GITHUB_ENV"
 
@@ -94,9 +96,10 @@ jobs:
                       d = found[-1]
                       print(f"picked {d['name']} {screen(d['identifier'])} on {r['identifier']} ({types[d['identifier']].get('bundlePath')})", file=sys.stderr)
                       return d["identifier"], r["identifier"]
+          # No 6.3" device: fail here rather than take wrong-size shots
           print(*(pick(lambda d: num(d["name"]) > 0 and screen(d["identifier"]) == (1206, 2622))
                   or pick(lambda d: screen(d["identifier"]) == (1206, 2622))
-                  or pick(lambda d: num(d["name"]) > 0)))
+                  or sys.exit("no 1206x2622 iPhone for any installed runtime")))
           PY
           read -r type runtime < <(python3 "$RUNNER_TEMP/pick.py")
           echo "::notice::device type $type, runtime $runtime"
@@ -112,7 +115,9 @@ jobs:
 
       - name: Install Maestro
         run: |
-          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          # Pinned: the flow relies on this version's scroll timing and takeScreenshot paths.
+          # Bump on purpose and recheck the shots.
+          curl -fsSL "https://get.maestro.mobile.dev" | MAESTRO_VERSION=2.11.0 bash
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
       - name: Take the screenshots
@@ -149,8 +154,19 @@ jobs:
             w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/ {print $2}'); h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/ {print $2}')
             case "$f" in *-land.png) [ "$h" -gt "$w" ] && sips -r 270 "$f" >/dev/null ;; esac
             python3 "$RUNNER_TEMP/noexif.py" "$f"
-            echo "$f $(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')"
+            size=$(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')
+            echo "$f $size"
           done
+          # App Store 6.3" sizes, and every shot the flow takes
+          bad=0
+          for name in 01-launcher 02-stream-land 03-stream-menu-land 04-edit-controls-land 04b-widget-picker-land 05-input-deck-land 06-settings-gyro; do
+            f="$name.png"
+            case "$name" in *-land) want="2622 1206 " ;; *) want="1206 2622 " ;; esac
+            if [ ! -e "$f" ]; then echo "::error::missing $f"; bad=1; continue; fi
+            got=$(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')
+            [ "$got" = "$want" ] || { echo "::error::$f is ${got}px, want ${want}px"; bad=1; }
+          done
+          exit $bad
 
       - name: App log
         if: always()

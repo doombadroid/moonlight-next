@@ -49,7 +49,15 @@ struct InputDeckView: View {
                 .accessibilityLabel("Hide input deck")
             }
             switch Mode(rawValue: mode) {
-            case .gamepad: GamepadPanel()
+            case .gamepad:
+                // Shrunk to fit a short deck (a phone in landscape) instead of running off it
+                GeometryReader { geo in
+                    let scale = min(1, geo.size.height / GamepadPanel.height)
+                    GamepadPanel()
+                        .frame(width: geo.size.width / scale, height: geo.size.height / scale)
+                        .scaleEffect(scale)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                }
             default: FullKeyboardDeck()
             }
         }
@@ -283,9 +291,18 @@ private struct FullKeyboardDeck: View {
     @SwiftUI.State private var pressed: Set<UUID> = []
 
     var body: some View {
-        VStack(spacing: 10) {
-            TrackpadPanel()
-            KeyGrid(rows: Layouts.full, keyHeight: 54, state: state, pressed: $pressed)
+        // The keys shrink to fit the deck (5 rows, 6 pt apart). Where that would take them under
+        // 32 pt with the trackpad (60 pt and 10 pt spacing) above, the trackpad goes instead.
+        GeometryReader { geo in
+            let h = geo.size.height
+            let withPad = min(54, (h - 70 - 24) / 5)
+            let showPad = withPad >= 32
+            VStack(spacing: 10) {
+                if showPad { TrackpadPanel() }
+                KeyGrid(rows: Layouts.full, keyHeight: showPad ? withPad : max(20, min(54, (h - 24) / 5)),
+                        state: state, pressed: $pressed)
+            }
+            .frame(width: geo.size.width, height: h, alignment: .bottom)
         }
     }
 }
@@ -472,6 +489,9 @@ private enum Pad {
 }
 
 private struct GamepadPanel: View {
+    /// Natural height: shoulder row 42 + 14 + face buttons 156 + 16 + stick 120
+    static let height: CGFloat = 348
+
     var body: some View {
         VStack(spacing: 14) {
             HStack(spacing: 8) {

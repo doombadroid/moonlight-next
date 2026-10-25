@@ -644,8 +644,9 @@ static os_log_t DuoLog(void) {
         deck = CGRectMake(0, CGRectGetMaxY(fold), bounds.size.width, CGRectGetMaxY(bounds) - CGRectGetMaxY(fold));
     }
     else {
-        // Opened by hand on a flat screen: the lower half
-        CGFloat height = floor(bounds.size.height * 0.48);
+        // Opened by hand on a flat screen: the lower half, but at least 300 pt where that still
+        // leaves 150 pt of stream (a phone in landscape, where half is too short for the keys)
+        CGFloat height = MAX(floor(bounds.size.height * 0.48), MIN(bounds.size.height - 150, 300));
         deck = CGRectMake(0, CGRectGetMaxY(bounds) - height, bounds.size.width, height);
     }
     _deckController.view.frame = deck;
