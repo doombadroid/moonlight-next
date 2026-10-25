@@ -158,7 +158,21 @@ struct MacroStep: Codable, Equatable, Identifiable {
         }
     }
 
-    var key: String { String(describing: self) }
+    /// Saved name (an @objc enum doesn't print its case names)
+    var key: String {
+        switch self {
+        case .settings: return "settings"
+        case .disconnect: return "disconnect"
+        case .quitApp: return "quitApp"
+        case .pictureInPicture: return "pip"
+        case .editControls: return "editControls"
+        case .softKeyboard: return "softKeyboard"
+        case .inputDeck: return "inputDeck"
+        case .touchToggle: return "touchToggle"
+        case .controllerMouse: return "controllerMouse"
+        case .stats: return "stats"
+        }
+    }
 }
 
 struct MNWidget: Codable, Equatable, Identifiable {

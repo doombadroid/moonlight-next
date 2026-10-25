@@ -289,9 +289,8 @@ import UIKit
         let global = osc?.globalOpacity ?? 1
         for widget in widgets {
             guard let view = views[widget.id] else { continue }
-            if live[widget.id]?.docked != true {
-                view.frame = rect(of: widget)
-            }
+            guard live[widget.id]?.docked != true else { continue }
+            view.frame = rect(of: widget)
             view.globalOpacity = global
             let hidden = isHiddenByFolder(widget)
             view.isHidden = hidden && !isEditing
@@ -694,7 +693,7 @@ import UIKit
         if sprint != l.sprinting {
             if sprint {
                 inputs.press(.key(w.sprintKey), by: w.id)
-                haptic(w, force: true)
+                haptic(w)
             }
             else {
                 inputs.release(.key(w.sprintKey), by: w.id)
@@ -831,9 +830,9 @@ import UIKit
 
     private var generators: [MNWidget.Haptic: UIImpactFeedbackGenerator] = [:]
 
-    private func haptic(_ w: MNWidget, force: Bool = false) {
+    private func haptic(_ w: MNWidget) {
         guard UserDefaults.standard.object(forKey: "mnHapticsEnabled") as? Bool ?? true else { return }
-        let style = force && w.haptic == .off ? .light : w.haptic
+        let style = w.haptic
         let feedback: UIImpactFeedbackGenerator.FeedbackStyle
         switch style {
         case .off: return
