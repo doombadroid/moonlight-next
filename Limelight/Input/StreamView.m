@@ -601,9 +601,6 @@ typedef struct {
 
 // Opens the soft keyboard (lifting the stream so anchorY stays above it), or closes it
 - (void)toggleSoftKeyboardAnchoredAt:(CGFloat)anchorY {
-#if !TARGET_OS_TV
-    if (MNDemo.isOn) { NSLog(@"MNKBDIAG toggle %@", [NSThread callStackSymbols]); } // TEMP diagnostic
-#endif
     if (isInputingText) {
         Log(LOG_D, @"Closing the keyboard");
         [keyInputField resignFirstResponder];

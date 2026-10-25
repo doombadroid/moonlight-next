@@ -855,7 +855,6 @@ static os_log_t DuoLog(void) {
 
 #if !TARGET_OS_TV
 - (void)keyboardWillShow:(NSNotification *)notification {
-    if (MNDemo.isOn) { NSLog(@"MNKBDIAG willShow first=%@ %@", [UIApplication.sharedApplication.keyWindow performSelector:@selector(firstResponder)], [NSThread callStackSymbols]); } // TEMP diagnostic
     // Only for the stream's own soft keyboard (opened with a finger tap)
     if (![_streamView softKeyboardShown]) {
         return;

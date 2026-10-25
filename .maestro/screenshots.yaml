@@ -1,6 +1,6 @@
 # App Store screenshots on an iPhone simulator, in demo mode (-MNDemoMode YES): one made-up
 # PC with MoonLume's own box art, and a still in place of the stream (no network).
-# Run by .github/workflows/sim-screenshots.yml from the output folder.
+# Run by .github/workflows/sim-screenshots.yml, which turns *-land shots to landscape.
 appId: com.doombadroid.moonlume
 ---
 - launchApp:
@@ -24,31 +24,32 @@ appId: com.doombadroid.moonlume
     timeout: 3000
 - takeScreenshot: 01-launcher
 
-# The stream (landscape): on-screen gamepad over the demo frame
+# The stream is landscape-only. The device is turned too: with the device left in portrait,
+# XCTest drops every element right of the portrait width and taps land in portrait points.
 - tapOn: "Resume"
+- setOrientation: LANDSCAPE_LEFT
 - extendedWaitUntil:
-    visible:
-      id: "DemoStreamFrame"
+    visible: "Stream menu"
     timeout: 15000
 - waitForAnimationToEnd:
     timeout: 4000
 - takeScreenshot: 02-stream-land
 
-- tapOn:
-    point: "92%,88%"
+- tapOn: "Stream menu"
 - waitForAnimationToEnd:
     timeout: 3000
-- takeScreenshot: 03-stream-menu-land
+# First keyboard use in a fresh simulator shows the swipe-typing intro (the workflow
+# also marks it seen)
 - tapOn:
     text: "Continue"
     optional: true
-- takeScreenshot: dbg-after-continue
+- extendedWaitUntil:
+    visible: "Edit Controls"
+    timeout: 10000
+- takeScreenshot: 03-stream-menu-land
 
-# The ••• menu button isn't in the XCTest hierarchy: it's tapped where it is. Points are
-# percentages of the portrait screen (the simulator stays portrait; the stream turns its UI).
 # Edit Controls, then the widget picker
-- tapOn:
-    point: "79%,75%"
+- tapOn: "Edit Controls"
 - extendedWaitUntil:
     visible: "Add widget"
     timeout: 10000
@@ -57,7 +58,7 @@ appId: com.doombadroid.moonlume
 - takeScreenshot: 04-edit-controls-land
 - tapOn: "Add widget"
 - extendedWaitUntil:
-    visible: "Add Widget"
+    visible: "Gamepad buttons"
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 2000
@@ -73,29 +74,43 @@ appId: com.doombadroid.moonlume
     timeout: 2000
 
 # The keyboard & trackpad input deck
-- tapOn:
-    point: "92%,88%"
+- tapOn: "Stream menu"
 - tapOn: "Keyboard & Trackpad"
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: 05-input-deck-land
 
-# Back to the launcher, then Settings (portrait): Controller and Gyro
-- tapOn:
-    point: "92%,88%"
+# Back to the launcher (Disconnect is further down the menu), then Settings in portrait
+- tapOn: "Stream menu"
+- runFlow:
+    when:
+      notVisible: "Disconnect"
+    commands:
+      - swipe:
+          from:
+            text: "Turn Touch Off"
+          direction: UP
 - tapOn: "Disconnect"
+- setOrientation: PORTRAIT
 - extendedWaitUntil:
     visible: "NOW RUNNING"
     timeout: 15000
+- tapOn:
+    text: "Back|Computers"
+    optional: true
 - runFlow:
     when:
       notVisible: "Settings"
     commands:
-      - tapOn: "Computers"
+      - tapOn:
+          point: "9%,10%"
 - tapOn: "Settings"
 - extendedWaitUntil:
     visible: "Done"
     timeout: 10000
+- tapOn:
+    text: "Continue"
+    optional: true
 - scrollUntilVisible:
     element: "GYRO"
     direction: DOWN
