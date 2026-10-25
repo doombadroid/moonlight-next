@@ -13,6 +13,15 @@
       "tintColor": "8ab4ff",
       "versions": [
         {
+          "version": "1.0.22",
+          "buildVersion": "22",
+          "date": "2026-10-25T00:37:37Z",
+          "localizedDescription": "Xcode 27.1 Build version 27A9275, iOS SDK 27.1",
+          "downloadURL": "https://github.com/doombadroid/moonlight-next/releases/download/build-22/MoonlightNext-unsigned.ipa",
+          "size": 3164449,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.21",
           "buildVersion": "21",
           "date": "2026-10-25T00:32:55Z",
@@ -46,15 +55,6 @@
           "localizedDescription": "Xcode 27.1 Build version 27A9275, iOS SDK 27.1",
           "downloadURL": "https://github.com/doombadroid/moonlight-next/releases/download/build-16/MoonlightNext-unsigned.ipa",
           "size": 3150067,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.0.15",
-          "buildVersion": "15",
-          "date": "2026-10-24T23:55:38Z",
-          "localizedDescription": "Xcode 27.1 Build version 27A9275, iOS SDK 27.1",
-          "downloadURL": "https://github.com/doombadroid/moonlight-next/releases/download/build-15/MoonlightNext-unsigned.ipa",
-          "size": 3144650,
           "minOSVersion": "17.0"
         }
       ],
