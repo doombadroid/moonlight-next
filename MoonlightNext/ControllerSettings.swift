@@ -51,8 +51,8 @@ import SwiftUI
     }
 }
 
-/// Settings › Controller, Gyro and Controller mouse.
-struct ControllerSettingsSections: View {
+/// Settings › Controller.
+struct ControllerSettingsSection: View {
     @AppStorage(MNControllerPrefs.emulatedKey) private var emulated = MNControllerPrefs.Emulated.automatic.rawValue
     @AppStorage(MNControllerPrefs.motionKey) private var motionSource = MNControllerPrefs.Motion.automatic.rawValue
     @AppStorage(MNRumble.targetKey) private var rumbleTarget = MNRumble.Target.automatic.rawValue
@@ -61,6 +61,50 @@ struct ControllerSettingsSections: View {
     @AppStorage(MNAdaptiveTriggers.enabledKey) private var adaptiveTriggers = true
     @AppStorage(MNControllerPrefs.stickMinimumKey) private var stickMinimum = 0.0
 
+    var body: some View {
+        SettingsSection("Controller", id: "controller") {
+            SettingChoice("Emulated controller", id: MNControllerPrefs.emulatedKey,
+                          tip: "PlayStation makes the host create a DualShock or DualSense, so games and Steam Input can use the phone's motion sensors as the pad's gyro. It needs a Windows or Linux host: Sunshine on macOS has no virtual controller.") {
+                Picker("Emulated controller", selection: $emulated) {
+                    Text("Automatic").tag(MNControllerPrefs.Emulated.automatic.rawValue)
+                    Text("Xbox").tag(MNControllerPrefs.Emulated.xbox.rawValue)
+                    Text("PlayStation").tag(MNControllerPrefs.Emulated.playStation.rawValue)
+                }
+            }
+            SettingChoice("Motion sensors", id: MNControllerPrefs.motionKey,
+                          note: emulated == MNControllerPrefs.Emulated.xbox.rawValue ? "Needs PlayStation" : nil,
+                          tip: "Which gyro the host's virtual PlayStation pad reports. Auto uses a connected controller's own gyro when it has one, otherwise the phone's.") {
+                Picker("Motion sensors", selection: $motionSource) {
+                    Text("Auto").tag(MNControllerPrefs.Motion.automatic.rawValue)
+                    Text("Phone").tag(MNControllerPrefs.Motion.phone.rawValue)
+                    Text("Controller").tag(MNControllerPrefs.Motion.controller.rawValue)
+                    Text("Off").tag(MNControllerPrefs.Motion.off.rawValue)
+                }
+            }
+            SettingChoice("Rumble", id: MNRumble.targetKey) {
+                Picker("Rumble", selection: $rumbleTarget) {
+                    Text("Auto").tag(MNRumble.Target.automatic.rawValue)
+                    Text("Phone").tag(MNRumble.Target.phone.rawValue)
+                    Text("Off").tag(MNRumble.Target.off.rawValue)
+                }
+            }
+            if rumbleTarget == MNRumble.Target.automatic.rawValue {
+                SettingToggle("Phone rumble without a controller", id: MNRumble.phoneFallbackKey, isOn: $phoneRumble)
+            }
+            SettingToggle("Swap rumble motors", id: MNRumble.swapKey, isOn: $swapMotors)
+            SettingToggle("DualSense adaptive triggers", id: MNAdaptiveTriggers.enabledKey, isOn: $adaptiveTriggers,
+                          tip: "Trigger resistance reaches a real DualSense only when the host emulates one, in practice Sunshine on Linux.")
+            SettingSlider("Stick minimum offset", id: MNControllerPrefs.stickMinimumKey, value: $stickMinimum, in: 0...0.4,
+                          step: 0.05, format: "%.0f%%", scale: 100,
+                          tip: "Lifts a controller's small stick movements past a game's deadzone.")
+        } footer: {
+            Text("Controller type and motion apply the next time you connect.")
+        }
+    }
+}
+
+/// Settings › Gyro.
+struct GyroSettingsSection: View {
     @AppStorage(GyroSettings.modeKey) private var gyroMode = GyroSettings.Mode.off.rawValue
     @AppStorage(GyroSettings.sourceKey) private var gyroSource = GyroSettings.Source.phone.rawValue
     @AppStorage(GyroSettings.activationKey) private var gyroActivation = GyroSettings.Activation.always.rawValue
@@ -74,51 +118,13 @@ struct ControllerSettingsSections: View {
     @AppStorage(GyroSettings.steeringKey) private var steering = false
     @AppStorage(GyroSettings.steeringSensitivityKey) private var steeringSensitivity = 1.0
 
-    @AppStorage(ControllerMouseSettings.chordKey) private var mouseChord = true
-    @AppStorage(ControllerMouseSettings.leftStickKey) private var mouseLeftStick = false
-    @AppStorage(ControllerMouseSettings.clicksKey) private var mouseClicks = ControllerMouseSettings.Clicks.faceButtons.rawValue
-    @AppStorage(ControllerMouseSettings.speedKey) private var mouseSpeed = 1.0
-
-    @State private var calibration: String?
+    @SwiftUI.State private var calibration: String?
 
     var body: some View {
-        Section {
-            choice("Emulated controller") {
-                Picker("Emulated controller", selection: $emulated) {
-                    Text("Automatic").tag(MNControllerPrefs.Emulated.automatic.rawValue)
-                    Text("Xbox").tag(MNControllerPrefs.Emulated.xbox.rawValue)
-                    Text("PlayStation").tag(MNControllerPrefs.Emulated.playStation.rawValue)
-                }
-            }
-            choice("Motion sensors", note: emulated == MNControllerPrefs.Emulated.xbox.rawValue ? "Needs PlayStation" : nil) {
-                Picker("Motion sensors", selection: $motionSource) {
-                    Text("Auto").tag(MNControllerPrefs.Motion.automatic.rawValue)
-                    Text("Phone").tag(MNControllerPrefs.Motion.phone.rawValue)
-                    Text("Controller").tag(MNControllerPrefs.Motion.controller.rawValue)
-                    Text("Off").tag(MNControllerPrefs.Motion.off.rawValue)
-                }
-            }
-            choice("Rumble") {
-                Picker("Rumble", selection: $rumbleTarget) {
-                    Text("Auto").tag(MNRumble.Target.automatic.rawValue)
-                    Text("Phone").tag(MNRumble.Target.phone.rawValue)
-                    Text("Off").tag(MNRumble.Target.off.rawValue)
-                }
-            }
-            if rumbleTarget == MNRumble.Target.automatic.rawValue {
-                Toggle("Phone rumble without a controller", isOn: $phoneRumble)
-            }
-            Toggle("Swap rumble motors", isOn: $swapMotors)
-            Toggle("DualSense adaptive triggers", isOn: $adaptiveTriggers)
-            slider("Stick minimum offset", value: $stickMinimum, in: 0...0.4, step: 0.05, format: "%.0f%%", scale: 100)
-        } header: {
-            Theme.label("Controller")
-        } footer: {
-            Text("PlayStation makes the host create a DualShock or DualSense, so games and Steam Input can use the phone's motion sensors as the pad's gyro (Auto uses a connected controller's own gyro when it has one). It needs a Windows or Linux host: Sunshine on macOS has no virtual controller. Stick minimum offset lifts a controller's small stick movements past a game's deadzone. Adaptive triggers reach a real DualSense only when the host emulates one, in practice Sunshine on Linux. Controller type and motion apply the next time you connect.")
-        }
-
-        Section {
-            choice("Gyro aiming") {
+        SettingsSection("Gyro", id: "gyro") {
+            SettingChoice("Gyro aiming", id: GyroSettings.modeKey,
+                          tip: "Turn the phone, or the controller's gyro, to aim. Mouse suits most PC games and the desktop; right stick suits games that only take a controller.",
+                          learnMore: "http://gyrowiki.jibbsmart.com") {
                 Picker("Gyro aiming", selection: $gyroMode) {
                     Text("Off").tag(GyroSettings.Mode.off.rawValue)
                     Text("Mouse").tag(GyroSettings.Mode.mouse.rawValue)
@@ -126,23 +132,32 @@ struct ControllerSettingsSections: View {
                 }
             }
             if gyroMode != GyroSettings.Mode.off.rawValue {
-                choice("Aim with") {
+                SettingChoice("Aim with", id: GyroSettings.sourceKey) {
                     Picker("Aim with", selection: $gyroSource) {
                         Text("Phone").tag(GyroSettings.Source.phone.rawValue)
                         Text("Controller's gyro").tag(GyroSettings.Source.controller.rawValue)
                     }
                 }
-                choice("Active") {
+                SettingChoice("Active", id: GyroSettings.activationKey) {
                     Picker("Active", selection: $gyroActivation) {
                         Text("Always").tag(GyroSettings.Activation.always.rawValue)
                         Text("While L2 is held").tag(GyroSettings.Activation.whileAiming.rawValue)
                     }
                 }
-                Picker("Gyro button", selection: $gyroButton) {
-                    ForEach(GyroSettings.Button.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+                SettingRow("Gyro button", id: GyroSettings.buttonKey,
+                           tip: "A button on a physical controller that turns gyro aiming on or off. It still reaches the game.") { label in
+                    HStack {
+                        label
+                        Spacer()
+                        Picker("Gyro button", selection: $gyroButton) {
+                            ForEach(GyroSettings.Button.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
                 }
                 if gyroButton != GyroSettings.Button.none.rawValue {
-                    choice("Button") {
+                    SettingChoice("Button", id: GyroSettings.buttonModeKey) {
                         Picker("Button", selection: $gyroButtonMode) {
                             Text("Hold to aim").tag(GyroSettings.ButtonMode.hold.rawValue)
                             Text("Toggle").tag(GyroSettings.ButtonMode.toggle.rawValue)
@@ -150,83 +165,71 @@ struct ControllerSettingsSections: View {
                         }
                     }
                 }
-                slider("Sensitivity", value: $gyroSensitivity, in: 0.25...4)
-                slider("Horizontal", value: $gyroSensitivityX, in: 0.25...2)
-                slider("Vertical", value: $gyroSensitivityY, in: 0.25...2)
-                Toggle("Invert up/down", isOn: $gyroInvertY)
+                SettingSlider("Sensitivity", id: GyroSettings.sensitivityKey, value: $gyroSensitivity, in: 0.25...4)
+                SettingSlider("Horizontal", id: GyroSettings.sensitivityXKey, value: $gyroSensitivityX, in: 0.25...2)
+                SettingSlider("Vertical", id: GyroSettings.sensitivityYKey, value: $gyroSensitivityY, in: 0.25...2)
+                SettingToggle("Invert up/down", id: GyroSettings.invertYKey, isOn: $gyroInvertY)
             }
-            Toggle("Tilt to steer", isOn: $steering)
+            SettingToggle("Tilt to steer", id: GyroSettings.steeringKey, isOn: $steering,
+                          tip: "Turns the phone's roll, like a wheel, into the left stick.")
             if steering {
-                slider("Steering sensitivity", value: $steeringSensitivity, in: 0.5...3)
+                SettingSlider("Steering sensitivity", id: GyroSettings.steeringSensitivityKey, value: $steeringSensitivity, in: 0.5...3)
             }
             if steering || gyroMode == GyroSettings.Mode.rightStick.rawValue {
-                slider("Minimum stick offset", value: $gyroMinStick, in: 0...0.4, step: 0.05, format: "%.0f%%", scale: 100)
+                SettingSlider("Minimum stick offset", id: GyroSettings.minStickKey, value: $gyroMinStick, in: 0...0.4,
+                              step: 0.05, format: "%.0f%%", scale: 100,
+                              tip: "Gets small gyro movements past a game's stick deadzone.")
             }
-            Button {
-                calibration = "Keep still…"
-                MNGyro.shared.calibrate { ok in
-                    calibration = ok ? "Calibrated" : "It moved. Lay it down and try again."
-                }
-            } label: {
+            SettingRow("Calibrate drift", id: "gyroCalibrate",
+                       tip: "Lay the phone and controller down for two seconds, then calibrate.") { label in
                 HStack {
-                    Text("Calibrate drift")
+                    label
                     Spacer()
                     if let calibration { Text(calibration).font(.system(size: 13)).foregroundStyle(Theme.muted) }
+                    Button("Calibrate", action: calibrate)
+                        .buttonStyle(.borderless)
+                        .navTarget(activate: calibrate)
                 }
             }
-        } header: {
-            Theme.label("Gyro")
         } footer: {
-            Text("Turn the phone, or the controller's gyro, to aim. Mouse suits most PC games and the desktop; right stick suits games that only take a controller. The gyro button is on a physical controller and still reaches the game. Tilt to steer turns the phone's roll, like a wheel, into the left stick. Minimum stick offset gets small movements past a game's stick deadzone. For Calibrate drift, lay the phone and controller down for two seconds. Pause gyro from the ••• menu while streaming.")
+            Text("Pause gyro from the ••• menu while streaming.")
         }
+    }
 
-        Section {
-            Toggle("Select + R3 toggles it", isOn: $mouseChord)
-            choice("Pointer stick") {
+    private func calibrate() {
+        calibration = "Keep still…"
+        MNGyro.shared.calibrate { ok in
+            calibration = ok ? "Calibrated" : "It moved. Lay it down and try again."
+        }
+    }
+}
+
+/// Settings › Controller mouse.
+struct ControllerMouseSettingsSection: View {
+    @AppStorage(ControllerMouseSettings.chordKey) private var mouseChord = true
+    @AppStorage(ControllerMouseSettings.leftStickKey) private var mouseLeftStick = false
+    @AppStorage(ControllerMouseSettings.clicksKey) private var mouseClicks = ControllerMouseSettings.Clicks.faceButtons.rawValue
+    @AppStorage(ControllerMouseSettings.speedKey) private var mouseSpeed = 1.0
+
+    var body: some View {
+        SettingsSection("Controller mouse", id: "controllerMouse") {
+            SettingToggle("Select + R3 toggles it", id: ControllerMouseSettings.chordKey, isOn: $mouseChord)
+            SettingChoice("Pointer stick", id: ControllerMouseSettings.leftStickKey) {
                 Picker("Pointer stick", selection: $mouseLeftStick) {
                     Text("Right").tag(false)
                     Text("Left").tag(true)
                 }
             }
-            choice("Left / right click") {
+            SettingChoice("Left / right click", id: ControllerMouseSettings.clicksKey) {
                 Picker("Left / right click", selection: $mouseClicks) {
                     Text("A / B").tag(ControllerMouseSettings.Clicks.faceButtons.rawValue)
                     Text("R1 / L1").tag(ControllerMouseSettings.Clicks.shoulders.rawValue)
                     Text("R2 / L2").tag(ControllerMouseSettings.Clicks.triggers.rawValue)
                 }
             }
-            slider("Pointer speed", value: $mouseSpeed, in: 0.25...3)
-        } header: {
-            Theme.label("Controller mouse")
+            SettingSlider("Pointer speed", id: ControllerMouseSettings.speedKey, value: $mouseSpeed, in: 0.25...3)
         } footer: {
             Text("Drive the PC's pointer with a controller: one stick moves it, the other scrolls. While it's on, the game doesn't see the controller. Turn it on with Select + R3 or from the ••• menu.")
-        }
-    }
-
-    /// A labelled segmented control row.
-    private func choice<P: View>(_ title: String, note: String? = nil, @ViewBuilder picker: () -> P) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title)
-                Spacer()
-                if let note {
-                    Text(note).font(.system(size: 13)).foregroundStyle(Theme.muted)
-                }
-            }
-            picker().pickerStyle(.segmented).labelsHidden()
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func slider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>, step: Double = 0.25,
-                        format: String = "%.2g×", scale: Double = 1) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(String(format: format, value.wrappedValue * scale)).foregroundStyle(Theme.muted)
-            }
-            Slider(value: value, in: range, step: step)
         }
     }
 }
