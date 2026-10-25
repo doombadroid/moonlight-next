@@ -221,6 +221,7 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
 
     currentVideoStats.receivedFrames++;
     currentVideoStats.totalFrames++;
+    currentVideoStats.receivedBytes += decodeUnit->fullLength;
 
     PLENTRY entry = decodeUnit->bufferList;
     while (entry != NULL) {
@@ -299,8 +300,13 @@ int ArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, v
     
     // Disable lowering volume of other audio streams (SDL sets AVAudioSessionCategoryOptionDuckOthers by default)
 #if !TARGET_OS_TV
-    // Picture in picture only starts automatically for non-mixable playback
-    AVAudioSessionCategoryOptions audioOptions = MNPictureInPicture.enabled ? 0 : AVAudioSessionCategoryOptionMixWithOthers;
+    // Non-mixable playback pauses other apps' audio; picture in picture only starts
+    // automatically for non-mixable playback, so mixing is opt-in
+    AVAudioSessionCategoryOptions audioOptions = MNAudio.mixWithOthers ? AVAudioSessionCategoryOptionMixWithOthers : 0;
+    if (opusConfig->channelCount > 2) {
+        // Lets iOS render 5.1/7.1 as spatial audio on headphones that support it
+        [[AVAudioSession sharedInstance] setSupportsMultichannelContent:YES error:nil];
+    }
 #else
     AVAudioSessionCategoryOptions audioOptions = AVAudioSessionCategoryOptionMixWithOthers;
 #endif
@@ -342,6 +348,17 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
     decodeLen = opus_multistream_decode(opusDecoder, (unsigned char *)sampleData, sampleLength,
                                         (short*)audioBuffer, audioConfig.samplesPerFrame, 0);
     if (decodeLen > 0) {
+#if !TARGET_OS_TV
+        // Stream volume (and the muted-in-background state) as a gain on the samples
+        float gain = MNAudio.outputGain;
+        if (gain < 0.999f) {
+            short* samples = (short*)audioBuffer;
+            int count = decodeLen * audioConfig.channelCount;
+            for (int i = 0; i < count; i++) {
+                samples[i] = (short)(samples[i] * gain);
+            }
+        }
+#endif
         // Provide backpressure on the queue to ensure too many frames don't build up
         // in SDL's audio queue.
         while (SDL_GetQueuedAudioSize(audioDevice) / audioFrameSize > 10) {
@@ -491,6 +508,7 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t
     _streamConfig.bitrate = config.bitRate;
     _streamConfig.supportedVideoFormats = config.supportedVideoFormats;
     _streamConfig.audioConfiguration = config.audioConfiguration;
+    _streamConfig.colorRange = config.fullColorRange ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
     
     // Since we require iOS 12 or above, we're guaranteed to be running
     // on a 64-bit device with ARMv8 crypto instructions, so we don't

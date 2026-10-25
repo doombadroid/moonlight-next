@@ -26,6 +26,7 @@ typedef struct {
     uint32_t maxLateUs;      // worst network delay spike in this window
     int networkStutters;     // frames late enough to show as a hitch
     int hostGaps;            // gaps the PC itself left between captured frames
+    uint64_t receivedBytes;  // video payload received in this window
 } video_stats_t;
 
 #define MN_STUTTER_HISTORY 16
