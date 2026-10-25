@@ -42,6 +42,8 @@
     // long press already right-clicked (click-on-lift mode)
     BOOL moved;
     BOOL leftDown;
+    // A long press holding the right button (click-on-lift off)
+    BOOL rightDown;
     BOOL rightClicked;
     // A second finger joined: the single-finger click is off until all fingers lift
     BOOL multiFinger;
@@ -79,6 +81,8 @@
     // Raise the left click and start a right click
     LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
     LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
+    leftDown = NO;
+    rightDown = YES;
 }
 
 - (void)clickButton:(int)button {
@@ -111,6 +115,11 @@
             if (leftDown) {
                 leftDown = NO;
                 LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+            }
+            if (rightDown) {
+                // A second finger after a long press: the multi-finger lift won't release it
+                rightDown = NO;
+                LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
             }
         }
         if (twoFingerGestures && fingers.count == 2) {
@@ -248,6 +257,7 @@
         
         // Raise right button too in case we triggered a long press gesture
         LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
+        rightDown = NO;
     }
     leftDown = NO;
     
