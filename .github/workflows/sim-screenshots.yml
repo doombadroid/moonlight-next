@@ -4,6 +4,8 @@ name: Simulator screenshots
 # taken in the simulator in demo mode (-MNDemoMode YES: a made-up PC and a still in place of
 # the stream, since CI can't reach a streaming host). Manual only.
 on:
+  push:
+    branches: [vl/demo-shots]  # TEMPORARY: dispatch needs the file on master; remove before merging
   workflow_dispatch:
     inputs:
       app_run:
