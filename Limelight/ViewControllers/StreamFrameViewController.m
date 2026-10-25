@@ -39,6 +39,11 @@
 - (id)initWithRefreshRate:(float)arg1 videoDynamicRange:(int)arg2;
 @end
 
+#if !TARGET_OS_TV
+@interface StreamFrameViewController () <UIEditMenuInteractionDelegate>
+@end
+#endif
+
 @implementation StreamFrameViewController {
     ControllerSupport *_controllerSupport;
     StreamManager *_streamMan;
@@ -55,7 +60,6 @@
     StreamView *_streamView;
     UIScrollView *_scrollView;
     BOOL _userIsInteracting;
-    CGSize _keyboardSize;
     BOOL _tornDown;
     BOOL _quitOnExit;
 
@@ -73,6 +77,12 @@
     NSInteger _hingeStatus;     // UIHingeStatus; 0 = unknown
     CGFloat _hingeAngle;        // radians
     NSString *_lastDuoLog;
+
+    // The ••• menu's items, also shown by a left-edge swipe (Settings › Left-edge swipe)
+    void (^_menuProvider)(void (^)(NSArray<UIMenuElement*>*));
+    UIEditMenuInteraction *_edgeMenuInteraction;
+    // How far the stream is lifted to keep the spot the soft keyboard was opened from visible
+    CGFloat _keyboardLift;
 #endif
 }
 
@@ -166,12 +176,15 @@
     [self.view addGestureRecognizer:_playPauseTapGestureRecognizer];
 
 #else
-    _exitSwipeRecognizer = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeSwiped)];
+    _exitSwipeRecognizer = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeSwiped:)];
     _exitSwipeRecognizer.edges = UIRectEdgeLeft;
     _exitSwipeRecognizer.delaysTouchesBegan = NO;
     _exitSwipeRecognizer.delaysTouchesEnded = NO;
     
     [self.view addGestureRecognizer:_exitSwipeRecognizer];
+    _exitSwipeRecognizer.enabled = MNTouchPrefs.edgeSwipeDisconnects || MNTouchPrefs.edgeSwipeOpensMenu;
+    _edgeMenuInteraction = [[UIEditMenuInteraction alloc] initWithDelegate:self];
+    [self.view addInteraction:_edgeMenuInteraction];
 #endif
     
     _tipLabel = [[UILabel alloc] init];
@@ -209,9 +222,8 @@
                                                  name: UIApplicationDidEnterBackgroundNotification
                                                object: nil];
 
-#if 0
-    // FIXME: This doesn't work reliably on iPad for some reason. Showing and hiding the keyboard
-    // several times in a row will not correctly restore the state of the UIScrollView.
+#if !TARGET_OS_TV
+    // Lifts the stream so the spot the soft keyboard was opened from stays visible
     [[NSNotificationCenter defaultCenter] addObserver: self
                                              selector: @selector(keyboardWillShow:)
                                                  name: UIKeyboardWillShowNotification
@@ -277,6 +289,12 @@
     else {
         _streamView.frame = bounds;
     }
+#if !TARGET_OS_TV
+    if (_keyboardLift > 0) {
+        UIView* streamContainer = _scrollView != nil ? _scrollView : _streamView;
+        streamContainer.frame = CGRectOffset(streamContainer.frame, 0, -_keyboardLift);
+    }
+#endif
 
     _stageLabel.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
     _spinner.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds) - _stageLabel.frame.size.height - _spinner.frame.size.height);
@@ -309,7 +327,7 @@
     _menuButton.showsMenuAsPrimaryAction = YES;
 
     __weak StreamFrameViewController* weakSelf = self;
-    _menuButton.menu = [UIMenu menuWithChildren:@[[UIDeferredMenuElement elementWithUncachedProvider:^(void (^completion)(NSArray<UIMenuElement*>*)) {
+    _menuProvider = ^(void (^completion)(NSArray<UIMenuElement*>*)) {
         StreamFrameViewController* strongSelf = weakSelf;
         if (strongSelf == nil) {
             completion(@[]);
@@ -341,6 +359,16 @@
                                                 identifier:nil
                                                    handler:^(UIAction* action) { [weakSelf startLayoutEditor]; }]];
         }
+        BOOL touchOff = strongSelf->_streamView.touchInputDisabled;
+        [gyroItems addObject:[UIAction actionWithTitle:touchOff ? @"Turn Touch On" : @"Turn Touch Off"
+                                                 image:[UIImage systemImageNamed:touchOff ? @"hand.point.up.left" : @"hand.raised.slash"]
+                                            identifier:nil
+                                               handler:^(UIAction* action) {
+            StreamFrameViewController* s = weakSelf;
+            if (s != nil) {
+                s->_streamView.touchInputDisabled = !touchOff;
+            }
+        }]];
         completion([gyroItems arrayByAddingObjectsFromArray:@[
             [UIAction actionWithTitle:deckShown ? @"Hide Keyboard & Trackpad" : @"Keyboard & Trackpad"
                                 image:[UIImage systemImageNamed:@"keyboard"]
@@ -360,7 +388,8 @@
                               handler:^(UIAction* action) { [weakSelf returnToMainFrame]; }],
             quitAction,
         ]]);
-    }]]];
+    };
+    _menuButton.menu = [UIMenu menuWithChildren:@[[UIDeferredMenuElement elementWithUncachedProvider:_menuProvider]]];
 
     [self.view addSubview:_menuButton];
 }
@@ -539,6 +568,7 @@ static os_log_t DuoLog(void) {
         StreamFrameViewController* strongSelf = weakSelf;
         if (strongSelf != nil) {
             [strongSelf->_streamView reloadOnScreenControlsLevel];
+            strongSelf->_exitSwipeRecognizer.enabled = MNTouchPrefs.edgeSwipeDisconnects || MNTouchPrefs.edgeSwipeOpensMenu;
         }
     }];
     sheet.modalPresentationStyle = UIModalPresentationFormSheet;
@@ -622,26 +652,33 @@ static os_log_t DuoLog(void) {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-#if 0
+#if !TARGET_OS_TV
 - (void)keyboardWillShow:(NSNotification *)notification {
-    _keyboardSize = [[[notification userInfo] objectForKey:UIKeyboardFrameBeginUserInfoKey] CGRectValue].size;
-
-    [UIView animateWithDuration:0.3 animations:^{
-        CGRect frame = self->_scrollView.frame;
-        frame.size.height -= self->_keyboardSize.height;
-        self->_scrollView.frame = frame;
-    }];
+    // Only for the stream's own soft keyboard (opened with a finger tap)
+    if (![_streamView softKeyboardShown]) {
+        return;
+    }
+    CGRect keyboard = [self.view convertRect:[notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue]
+                         fromCoordinateSpace:self.view.window.windowScene.screen.coordinateSpace];
+    // Where the tap was before any lift, plus room to see what's being typed into
+    CGFloat anchor = [_streamView convertPoint:CGPointMake(0, [_streamView softKeyboardAnchorY]) toView:self.view].y + _keyboardLift;
+    CGFloat lift = MIN(MAX(anchor + 48 - CGRectGetMinY(keyboard), 0), keyboard.size.height);
+    [self setKeyboardLift:lift notification:notification];
 }
 
--(void)keyboardWillHide:(NSNotification *)notification {
-    // NOTE: UIKeyboardFrameEndUserInfoKey returns a different keyboard size
-    // than UIKeyboardFrameBeginUserInfoKey, so it's unsuitable for use here
-    // to undo the changes made by keyboardWillShow.
-    
-    [UIView animateWithDuration:0.3 animations:^{
-        CGRect frame = self->_scrollView.frame;
-        frame.size.height += self->_keyboardSize.height;
-        self->_scrollView.frame = frame;
+- (void)keyboardWillHide:(NSNotification *)notification {
+    [self setKeyboardLift:0 notification:notification];
+}
+
+- (void)setKeyboardLift:(CGFloat)lift notification:(NSNotification *)notification {
+    if (lift == _keyboardLift) {
+        return;
+    }
+    _keyboardLift = lift;
+    NSTimeInterval duration = [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    [UIView animateWithDuration:duration animations:^{
+        [self.view setNeedsLayout];
+        [self.view layoutIfNeeded];
     }];
 }
 #endif
@@ -804,11 +841,64 @@ static os_log_t DuoLog(void) {
     [self returnToMainFrame];
 }
 
-- (void)edgeSwiped {
+- (void)edgeSwiped:(UIGestureRecognizer*)gesture {
+#if !TARGET_OS_TV
+    if (MNTouchPrefs.edgeSwipeOpensMenu) {
+        if (gesture.state == UIGestureRecognizerStateEnded) {
+            // Off the very edge, where the swipe ended
+            CGPoint point = [gesture locationInView:self.view];
+            point.x = MAX(point.x, 80);
+            [_edgeMenuInteraction presentEditMenuWithConfiguration:[UIEditMenuConfiguration configurationWithIdentifier:nil sourcePoint:point]];
+        }
+        return;
+    }
+#endif
+    if (gesture.state != UIGestureRecognizerStateBegan) {
+        return;
+    }
     Log(LOG_I, @"User swiped to end stream");
     
     [self returnToMainFrame];
 }
+
+#if !TARGET_OS_TV
+- (UIMenu *)editMenuInteraction:(UIEditMenuInteraction *)interaction
+           menuForConfiguration:(UIEditMenuConfiguration *)configuration
+               suggestedActions:(NSArray<UIMenuElement *> *)suggestedActions {
+    // The provider fills the items in synchronously
+    __block NSArray<UIMenuElement*>* items = @[];
+    _menuProvider(^(NSArray<UIMenuElement*>* elements) { items = elements; });
+    return [UIMenu menuWithChildren:items];
+}
+
+- (void)streamHotkeyPressed:(NSInteger)usage {
+    switch (usage) {
+        case UIKeyboardHIDUsageKeyboardD:
+            [self returnToMainFrame];
+            break;
+        case UIKeyboardHIDUsageKeyboardQ:
+            _quitOnExit = YES;
+            [self returnToMainFrame];
+            break;
+        case UIKeyboardHIDUsageKeyboardS:
+            if (self.presentedViewController == nil) {
+                [self presentStreamSettings];
+            }
+            break;
+        case UIKeyboardHIDUsageKeyboardO:
+            [self toggleStatsOverlay];
+            break;
+        case UIKeyboardHIDUsageKeyboardM:
+            MNMouse.captured = !MNMouse.captured;
+            [self setNeedsUpdateOfPrefersPointerLocked];
+            break;
+        case UIKeyboardHIDUsageKeyboardC:
+            MNMouse.cursorVisible = !MNMouse.cursorVisible;
+            [_streamView refreshPointerStyle];
+            break;
+    }
+}
+#endif
 
 - (void) connectionStarted {
     Log(LOG_I, @"Connection started");
@@ -1150,7 +1240,7 @@ static os_log_t DuoLog(void) {
     // Pointer lock breaks the UIKit mouse APIs, which is a problem because
     // GCMouse is horribly broken on iOS 14.0 for certain mice. Only lock
     // the cursor if there is a GCMouse present.
-    return [GCMouse mice].count > 0;
+    return MNMouse.captured && [GCMouse mice].count > 0;
 }
 #endif
 
