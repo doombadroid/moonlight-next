@@ -44,6 +44,20 @@ Half-folded (tabletop), with the keyboard and trackpad deck or the gamepad deck 
 <img src="docs/screenshots/duo-tabletop-gamepad.webp" alt="The half-folded iPhone Duo streaming SuperTuxKart above the gamepad deck" width="49%">
 </p>
 
+<details>
+<summary>App Store screenshots (iPhone Duo)</summary>
+
+<p>
+<img src="docs/screenshots/appstore/iphone-duo-inner-1-race-unfolded.webp" alt="App Store screenshot: iphone duo inner 1 race unfolded" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-inner-2-tabletop-keyboard.webp" alt="App Store screenshot: iphone duo inner 2 tabletop keyboard" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-inner-3-tabletop-keyboard-flat.webp" alt="App Store screenshot: iphone duo inner 3 tabletop keyboard flat" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-inner-4-tabletop-gamepad.webp" alt="App Store screenshot: iphone duo inner 4 tabletop gamepad" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-inner-5-tabletop-gamepad-flat.webp" alt="App Store screenshot: iphone duo inner 5 tabletop gamepad flat" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-outer-1-launcher.webp" alt="App Store screenshot: iphone duo outer 1 launcher" height="300">
+<img src="docs/screenshots/appstore/iphone-duo-outer-2-race-folded.webp" alt="App Store screenshot: iphone duo outer 2 race folded" height="300">
+</p>
+</details>
+
 <sub>Device frames are from Apple Design Resources. The game shown is [SuperTuxKart](https://supertuxkart.net) (GPL-3.0, art CC-BY-SA), streamed from a Linux PC running Sunshine.</sub>
 
 ## Features
