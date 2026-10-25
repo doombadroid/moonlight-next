@@ -129,7 +129,25 @@ enum GyroSettings {
 
     /// Shown in the stream menu ("Pause Gyro") only when something uses the gyro.
     @objc static var isConfigured: Bool {
-        GyroSettings.mode != .off || GyroSettings.steering || (shared.hostRate[gyroType] ?? 0) > 0
+        GyroSettings.mode != .off || GyroSettings.steering || (shared.hostRate[gyroType] ?? 0) > 0 || shared.aimWidgetShown
+    }
+
+    // MARK: On-screen gyro buttons
+
+    /// The layout has a hold-to-aim gyro button: aiming then only runs while it's held.
+    var aimWidgetShown = false {
+        didSet { if aimWidgetShown != oldValue { refresh() } }
+    }
+    /// Axis factors of the gyro button being held, nil when none is
+    var widgetAim: (x: Double, y: Double)? {
+        didSet { refresh() }
+    }
+    /// Gyro pause buttons held: aim stops so the phone can be re-centred
+    var widgetPauses = 0
+
+    /// Aiming target: Settings › Gyro, or the right stick when only a gyro button turns it on
+    private var aimMode: GyroSettings.Mode {
+        GyroSettings.mode != .off ? GyroSettings.mode : (aimWidgetShown ? .rightStick : .off)
     }
 
     @objc static var isPaused: Bool {
@@ -139,7 +157,7 @@ enum GyroSettings {
 
     /// Gyro aiming reads a controller's own gyro, so ControllerSupport must leave its sensors on.
     @objc static var wantsControllerSensors: Bool {
-        shared.streaming && GyroSettings.mode != .off && GyroSettings.source == .controller
+        shared.streaming && shared.aimMode != .off && GyroSettings.source == .controller
     }
 
     @objc func start(in view: UIView) {
@@ -177,7 +195,7 @@ enum GyroSettings {
 
     /// Start or stop the phone's sensors and the sampling timer to match what's in use.
     private func refresh() {
-        let aiming = GyroSettings.mode != .off
+        let aiming = aimMode != .off
         let needsPhone = streaming && ((aiming && GyroSettings.source == .phone) || GyroSettings.steering || hostWantsMotion)
         if (needsPhone || calibrating), motion.isDeviceMotionAvailable {
             if !motion.isDeviceMotionActive {
@@ -272,12 +290,18 @@ enum GyroSettings {
     // MARK: Aiming
 
     private func aim(_ device: CMDeviceMotion?, dt: Double, buttonAllows: Bool) {
-        let mode = GyroSettings.mode
-        guard mode != .off, !MNGyro.isPaused, buttonAllows, triggerAllows(), let rates = aimRates(device) else {
+        let mode = aimMode
+        // With a gyro button on screen, holding it is what turns aiming on
+        let allowed = aimWidgetShown ? widgetAim != nil : (!MNGyro.isPaused && buttonAllows && triggerAllows())
+        guard mode != .off, allowed, widgetPauses == 0, let rates = aimRates(device) else {
             releaseStick()
             return
         }
         var (horizontal, vertical) = rates
+        if let factors = widgetAim {
+            horizontal *= factors.x
+            vertical *= factors.y
+        }
 
         if GyroSettings.invertY { vertical = -vertical }
         if abs(horizontal) < deadZone { horizontal = 0 }

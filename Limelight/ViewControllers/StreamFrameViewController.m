@@ -86,6 +86,8 @@
     UIEditMenuInteraction *_edgeMenuInteraction;
     // How far the stream is lifted to keep the spot the soft keyboard was opened from visible
     CGFloat _keyboardLift;
+    // On-screen widgets, laid over the stream
+    MNWidgetLayer *_widgetLayer;
 #endif
 }
 
@@ -259,6 +261,16 @@
         [self.view addSubview:_streamView];
     }
     
+#if !TARGET_OS_TV
+    // Saved in the on-screen controls' layouts, so it shares their posture and game
+    _widgetLayer = [[MNWidgetLayer alloc] initWithControls:[_streamView layoutControls]];
+    __weak StreamFrameViewController* widgetOwner = self;
+    _widgetLayer.onFunction = ^(MNWidgetFunction function) {
+        [widgetOwner runWidgetFunction:function];
+    };
+    [self.view addSubview:_widgetLayer];
+#endif
+
     [self.view addSubview:_stageLabel];
     [self.view addSubview:_spinner];
     [self.view addSubview:_tipLabel];
@@ -298,6 +310,7 @@
         UIView* streamContainer = _scrollView != nil ? _scrollView : _streamView;
         streamContainer.frame = CGRectOffset(streamContainer.frame, 0, -_keyboardLift);
     }
+    _widgetLayer.frame = (_scrollView != nil ? _scrollView : _streamView).frame;
 #endif
 
     _stageLabel.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
@@ -370,7 +383,7 @@
                                                 identifier:nil
                                                    handler:^(UIAction* action) { [MNPictureInPicture.shared start]; }]];
         }
-        if ([strongSelf->_streamView visibleOnScreenControls] != nil) {
+        if ([strongSelf->_streamView layoutControls] != nil) {
             [gyroItems addObject:[UIAction actionWithTitle:@"Edit Controls"
                                                      image:[UIImage systemImageNamed:@"arrow.up.and.down.and.arrow.left.and.right"]
                                                 identifier:nil
@@ -539,16 +552,20 @@ static os_log_t DuoLog(void) {
 }
 
 // Rearranging the on-screen controls: touches select and drag controls until Save or Cancel
+// Widgets are edited in the same session. The controls may be hidden (turned off, or a controller
+// is connected): their layouts still hold the widgets.
 - (void)startLayoutEditor {
-    OnScreenControls* osc = [_streamView visibleOnScreenControls];
+    OnScreenControls* osc = [_streamView layoutControls];
     if (osc == nil || _layoutEditorBar != nil) {
         return;
     }
     [osc setEditing:YES];
+    [_widgetLayer setEditing:YES];
     _layoutEditorControls = osc;
     __weak StreamFrameViewController* weakSelf = self;
     __weak OnScreenControls* weakOsc = osc;
     _layoutEditorBar = [MNLayoutEditorBar makeViewControllerWithControls:osc
+                                                                 widgets:_widgetLayer
                                                            hasGameLayout:[osc hasLayoutForThisGame]
                                                                   onSave:^(BOOL thisGame) {
         [weakOsc saveLayoutForThisGame:thisGame];
@@ -581,6 +598,7 @@ static os_log_t DuoLog(void) {
 - (void)endLayoutEditor {
     // Not saved: this puts the saved layout back. Saved: it reloads what was just saved.
     [_layoutEditorControls setEditing:NO];
+    [_widgetLayer setEditing:NO];
     _layoutEditorControls = nil;
     [_layoutEditorBar willMoveToParentViewController:nil];
     [_layoutEditorBar.view removeFromSuperview];
@@ -600,6 +618,46 @@ static os_log_t DuoLog(void) {
     }];
     sheet.modalPresentationStyle = UIModalPresentationFormSheet;
     [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)runWidgetFunction:(MNWidgetFunction)function {
+    switch (function) {
+        case MNWidgetFunctionSettings:
+            if (self.presentedViewController == nil) {
+                [self presentStreamSettings];
+            }
+            break;
+        case MNWidgetFunctionDisconnect:
+            [self returnToMainFrame];
+            break;
+        case MNWidgetFunctionQuitApp:
+            _quitOnExit = YES;
+            [self returnToMainFrame];
+            break;
+        case MNWidgetFunctionPictureInPicture:
+            if (MNPictureInPicture.shared.canStart) {
+                [MNPictureInPicture.shared start];
+            }
+            break;
+        case MNWidgetFunctionEditControls:
+            [self startLayoutEditor];
+            break;
+        case MNWidgetFunctionSoftKeyboard:
+            [_streamView toggleSoftKeyboard];
+            break;
+        case MNWidgetFunctionInputDeck:
+            [self toggleInputDeck];
+            break;
+        case MNWidgetFunctionTouchToggle:
+            _streamView.touchInputDisabled = !_streamView.touchInputDisabled;
+            break;
+        case MNWidgetFunctionControllerMouse:
+            [MNControllerMouse.shared toggle];
+            break;
+        case MNWidgetFunctionStats:
+            [self toggleStatsOverlay];
+            break;
+    }
 }
 
 - (void)toggleInputDeck {
@@ -664,6 +722,8 @@ static os_log_t DuoLog(void) {
     }
     _tornDown = YES;
 #if !TARGET_OS_TV
+    // Nothing a widget holds may stay down on the host
+    [_widgetLayer releaseAll];
     [MNGyro.shared stop];
     [MNPhoneRumble.shared stop];
     [MNControllerMouse.shared stop];

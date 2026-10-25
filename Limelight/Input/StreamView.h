@@ -53,6 +53,11 @@
 - (CGFloat) softKeyboardAnchorY;
 // Re-reads the mouse pointer style (MNMouse.cursorVisible changed)
 - (void) refreshPointerStyle;
+// Opens or closes the soft keyboard (a widget's function button)
+- (void) toggleSoftKeyboard;
+// The on-screen controls object, also while the controls are hidden: it holds the layouts
+// that on-screen widgets are saved in
+- (OnScreenControls*) layoutControls;
 #endif
 
 @end
