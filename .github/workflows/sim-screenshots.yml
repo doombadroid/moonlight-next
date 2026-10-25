@@ -102,6 +102,10 @@ jobs:
           echo "::notice::device type $type, runtime $runtime"
           udid=$(xcrun simctl create shots "$type" "$runtime")
           xcrun simctl boot "$udid"
+          # A connected hardware keyboard keeps the software keyboard away: headless, it came
+          # up whenever the stream's ••• menu opened. Simulator.app applies the setting.
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool true
+          open -a Simulator --args -CurrentDeviceUDID "$udid"
           xcrun simctl bootstatus "$udid" -b
           xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
           xcrun simctl ui "$udid" appearance dark
@@ -130,10 +134,25 @@ jobs:
           { find "$RUNNER_TEMP/shots" -maxdepth 1 -name '*.png'; find ~/.maestro/tests -path '*takeScreenshot*' -name '*.png'; } \
             | while read -r f; do cp "$f" "$RUNNER_TEMP/appstore/"; done
           cd "$RUNNER_TEMP/appstore"
+          # Screenshots taken with the device turned carry an EXIF orientation that viewers
+          # (and possibly App Store Connect) apply on top of the pixels: drop EXIF and XMP.
+          cat > "$RUNNER_TEMP/noexif.py" <<'PY'
+          import struct, sys
+          for path in sys.argv[1:]:
+              data = open(path, "rb").read()
+              out, i = [data[:8]], 8
+              while i < len(data):
+                  n, kind = struct.unpack(">I4s", data[i:i + 8])
+                  if kind not in (b"eXIf", b"iTXt", b"tEXt", b"zTXt"):
+                      out.append(data[i:i + 12 + n])
+                  i += 12 + n
+              open(path, "wb").write(b"".join(out))
+          PY
           for f in *.png; do
             [ -e "$f" ] || continue
             w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/ {print $2}'); h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/ {print $2}')
             case "$f" in *-land.png) [ "$h" -gt "$w" ] && sips -r 270 "$f" >/dev/null ;; esac
+            python3 "$RUNNER_TEMP/noexif.py" "$f"
             echo "$f $(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')"
           done
 
