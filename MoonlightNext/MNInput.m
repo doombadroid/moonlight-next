@@ -101,12 +101,6 @@ static __weak ControllerSupport* sControllerSupport;
     [cs updateFinished:controller];
 }
 
-+ (void) horizontalScroll:(short)amount {
-    if (amount != 0) {
-        LiSendHighResHScrollEvent(amount);
-    }
-}
-
 + (void) gamepadSteerX:(short)x {
     ControllerSupport* cs = sControllerSupport;
     Controller* controller = [cs getOscController];

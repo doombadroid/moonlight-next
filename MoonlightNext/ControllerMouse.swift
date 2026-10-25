@@ -128,7 +128,7 @@ enum ControllerMouseSettings {
             let amount = scroll.x * scrollPerSecond * dt + remainder.scrollX
             let whole = amount.rounded(.towardZero)
             remainder.scrollX = amount - whole
-            MNInput.horizontalScroll(Int16(clamping: Int(whole)))
+            MNInput.hscroll(Int16(clamping: Int(whole)))
         }
 
         let (left, right): (GCControllerButtonInput, GCControllerButtonInput)

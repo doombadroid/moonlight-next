@@ -49,8 +49,6 @@ typedef NS_ENUM(int, MNMouseButton) {
 + (void) gamepadLeftTrigger:(uint8_t)left;
 + (void) gamepadRightTrigger:(uint8_t)right;
 
-// One notch is 120, positive scrolls right.
-+ (void) horizontalScroll:(short)amount;
 // Left stick x only, leaving y to the on-screen stick (gyro steering).
 + (void) gamepadSteerX:(short)x;
 // Player 1 motion sample in the host's convention (SDL axes; m/s² for accel, deg/s for gyro).
