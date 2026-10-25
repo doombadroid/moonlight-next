@@ -60,6 +60,10 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     NSMutableArray* _decoded; // CMSampleBuffers, guarded by @synchronized(_decoded)
 #if !TARGET_OS_TV
     MNFrameInterpolator* _interpolator;
+    // Kept alive in the background without PiP nothing pulls frames, so common-c's queue overflows
+    // and asks the host for an IDR frame several times a second: drain them unseen instead
+    NSTimer* _backgroundDrain;
+    BOOL _discarding;
 #endif
 
     // Stats: decode time and interpolated frames, in one-second windows
@@ -199,8 +203,33 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     __weak VideoDecoderRenderer* weakSelf = self;
     MNPictureInPicture.shared.pump = ^{ [weakSelf pollFramesPaced:NO]; };
     [MNPictureInPicture.shared attach:displayLayer frameRate:frameRate];
+    // Called on the connection's thread: the timer runs on the main run loop, like the display link
+    _backgroundDrain = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer* timer) {
+        [weakSelf drainInBackground];
+    }];
+    [[NSRunLoop mainRunLoop] addTimer:_backgroundDrain forMode:NSRunLoopCommonModes];
 #endif
 }
+
+#if !TARGET_OS_TV
+- (void)drainInBackground
+{
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateBackground || MNPictureInPicture.shared.isActive) {
+        if (_discarding) {
+            // Frames were skipped: decoding restarts from a fresh IDR frame
+            _discarding = NO;
+            LiRequestIdrFrame();
+        }
+        return;
+    }
+    _discarding = YES;
+    VIDEO_FRAME_HANDLE handle;
+    PDECODE_UNIT du;
+    while (LiPollNextVideoFrame(&handle, &du)) {
+        LiCompleteVideoFrame(handle, DR_OK);
+    }
+}
+#endif
 
 // TODO: Refactor this
 int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
@@ -236,6 +265,9 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
 {
     [_displayLink invalidate];
 #if !TARGET_OS_TV
+    // Started on the main thread; invalidated there
+    NSTimer* drain = _backgroundDrain;
+    dispatch_async(dispatch_get_main_queue(), ^{ [drain invalidate]; });
     [MNPictureInPicture.shared detach];
 #endif
     // Decoding happens on the main thread, so the decoder is torn down there too
