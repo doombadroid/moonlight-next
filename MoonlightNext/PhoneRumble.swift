@@ -45,6 +45,9 @@ import Foundation
     private var engine: CHHapticEngine?
     private var player: CHHapticAdvancedPatternPlayer?
     private var running = false
+    /// Between a stream's start and end (main thread). Host rumble that arrives later, from the
+    /// connection's thread while it shuts down, is dropped instead of looping on in the launcher.
+    private var active = false
 
     private override init() {
         super.init()
@@ -59,11 +62,26 @@ import Foundation
 
     /// Called by ControllerSupport with the host's motor levels (0...65535); may be off the main thread.
     @objc(setLow:high:) func set(low: UInt16, high: UInt16) {
-        DispatchQueue.main.async { self.apply(low: low, high: high) }
+        DispatchQueue.main.async {
+            guard self.active else { return }
+            self.apply(low: low, high: high)
+        }
     }
 
+    /// Silences the phone; any thread.
     @objc func stop() {
         DispatchQueue.main.async { self.apply(low: 0, high: 0) }
+    }
+
+    /// A stream starts; main thread.
+    @objc func start() {
+        active = true
+    }
+
+    /// The stream ends: silent now and for any rumble still queued. Main thread.
+    @objc func end() {
+        active = false
+        apply(low: 0, high: 0)
     }
 
     private func apply(low: UInt16, high: UInt16) {

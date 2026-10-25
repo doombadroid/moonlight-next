@@ -154,6 +154,8 @@
     [_streamView setupStreamView:_controllerSupport interactionDelegate:self config:self.streamConfig];
 #if !TARGET_OS_TV
     [MNInput setControllerSupport:_controllerSupport];
+    [MNPhoneRumble.shared start];
+    [MNVendorRumble.shared start];
     [MNGyro.shared startIn:self.view];
     __weak StreamFrameViewController* weakSelf = self;
     MNPictureInPicture.shared.onClosedInBackground = ^{
@@ -787,7 +789,7 @@ static os_log_t DuoLog(void) {
     // Nothing a widget holds may stay down on the host
     [_widgetLayer releaseAll];
     [MNGyro.shared stop];
-    [MNPhoneRumble.shared stop];
+    [MNPhoneRumble.shared end];
     [MNControllerMouse.shared stop];
     [MNDummyInput stop];
     [MNInput setControllerSupport:nil];

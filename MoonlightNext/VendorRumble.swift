@@ -60,6 +60,8 @@ import GameController
     private var next: Data?
     private var sequence: UInt8 = 0x17
     private var resendTimer: Timer?
+    /// Between a stream's start and its stop (main thread); levels queued after the stop are dropped
+    private var active = false
 
     private static func pad(for controller: GCController?) -> Pad? {
         guard let vendor = controller?.vendorName else { return nil }
@@ -76,12 +78,21 @@ import GameController
         guard let pad = MNVendorRumble.pad(for: controller) else { return false }
         // 0-65535 → 0-255, rounded
         let l = UInt8((UInt32(low) * 255 + 32767) / 65535), h = UInt8((UInt32(high) * 255 + 32767) / 65535)
-        DispatchQueue.main.async { self.send(l, h, pad: pad) }
+        DispatchQueue.main.async {
+            guard self.active else { return }
+            self.send(l, h, pad: pad)
+        }
         return true
     }
 
-    /// Motors off and the channel closed, at the end of a stream.
+    /// A stream starts; main thread.
+    @objc func start() {
+        active = true
+    }
+
+    /// Motors off and the channel closed, at the end of a stream. Main thread.
     @objc func stop() {
+        active = false
         DispatchQueue.main.async {
             guard let pad = self.pad, self.session != nil else { return }
             self.send(0, 0, pad: pad)

@@ -59,6 +59,9 @@ static BOOL MouseCaptured(void) {
 #define EMULATING_SPECIAL    0x2
     
     bool _oscEnabled;
+    // Set when the stream ends: host feedback still arriving on the connection's thread (rumble,
+    // trigger effects, motion) is dropped from then on
+    BOOL _stopped;
     char _controllerNumbers;
     bool _multiController;
     bool _swapABXYButtons;
@@ -86,9 +89,21 @@ static void LiftStick(short* x, short* y, double minimum)
 }
 #endif
 
+// The connection's callback thread reads the controllers while the main thread adds and removes them
+-(Controller*) controllerForNumber:(NSInteger)controllerNumber
+{
+    @synchronized(_controllers) {
+        return [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
+    }
+}
+
 -(void) rumble:(unsigned short)controllerNumber lowFreqMotor:(unsigned short)lowFreqMotor highFreqMotor:(unsigned short)highFreqMotor
 {
-    Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
+    if (_stopped) {
+        // With the controllers gone this would route to the phone and buzz on in the launcher
+        return;
+    }
+    Controller* controller = [self controllerForNumber:controllerNumber];
 #if !TARGET_OS_TV
     if (MNRumble.swapMotors) {
         unsigned short low = lowFreqMotor;
@@ -127,7 +142,10 @@ static void LiftStick(short* x, short* y, double minimum)
 
 -(void) rumbleTriggers:(uint16_t)controllerNumber leftTrigger:(uint16_t)leftTrigger rightTrigger:(uint16_t)rightTrigger
 {
-    Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
+    if (_stopped) {
+        return;
+    }
+    Controller* controller = [self controllerForNumber:controllerNumber];
     if (controller == nil && controllerNumber == 0 && _oscEnabled) {
         // TODO: Trigger rumble emulation for OSC
     }
@@ -142,13 +160,16 @@ static void LiftStick(short* x, short* y, double minimum)
 
 - (void) setMotionEventState:(uint16_t)controllerNumber motionType:(uint8_t)motionType reportRateHz:(uint16_t)reportRateHz
 {
+    if (_stopped) {
+        return;
+    }
 #if !TARGET_OS_TV
     if (MNControllerPrefs.motionOff) {
         // Settings › Controller › Motion › Off
         return;
     }
     if (controllerNumber == 0) {
-        Controller* player1 = [_controllers objectForKey:@0] ?: _oscController;
+        Controller* player1 = [self controllerForNumber:0] ?: _oscController;
         if (player1.usesPhoneMotion) {
             [MNGyro.shared setHostMotionWithType:motionType rateHz:reportRateHz];
             return;
@@ -156,7 +177,7 @@ static void LiftStick(short* x, short* y, double minimum)
     }
 #endif
     if (@available(iOS 14.0, tvOS 14.0, *)) {
-        Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
+        Controller* controller = [self controllerForNumber:controllerNumber];
         if (controller == nil) {
             // No connected controller for this player
             return;
@@ -247,8 +268,11 @@ static void LiftStick(short* x, short* y, double minimum)
 }
 
 -(void) setControllerLed:(uint16_t)controllerNumber r:(uint8_t)r g:(uint8_t)g b:(uint8_t)b {
+    if (_stopped) {
+        return;
+    }
     if (@available(iOS 14.0, tvOS 14.0, *)) {
-        Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
+        Controller* controller = [self controllerForNumber:controllerNumber];
         if (controller == nil) {
             // No connected controller for this player
             return;
@@ -266,7 +290,10 @@ static void LiftStick(short* x, short* y, double minimum)
 -(void) setAdaptiveTriggers:(uint16_t)controllerNumber eventFlags:(uint8_t)eventFlags typeLeft:(uint8_t)typeLeft typeRight:(uint8_t)typeRight left:(const uint8_t*)left right:(const uint8_t*)right
 {
 #if !TARGET_OS_TV
-    Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
+    if (_stopped) {
+        return;
+    }
+    Controller* controller = [self controllerForNumber:controllerNumber];
     GCController* gamepad = controller.gamepad;
     if (gamepad == nil) {
         return;
@@ -275,6 +302,10 @@ static void LiftStick(short* x, short* y, double minimum)
     NSData* leftEffect = (eventFlags & DS_EFFECT_LEFT_TRIGGER) ? [NSData dataWithBytes:left length:DS_EFFECT_PAYLOAD_SIZE] : nil;
     NSData* rightEffect = (eventFlags & DS_EFFECT_RIGHT_TRIGGER) ? [NSData dataWithBytes:right length:DS_EFFECT_PAYLOAD_SIZE] : nil;
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (self->_stopped) {
+            // Queued behind the stream's end, which already reset the triggers
+            return;
+        }
         [MNAdaptiveTriggers applyTo:gamepad leftType:typeLeft left:leftEffect rightType:typeRight right:rightEffect];
     });
 #endif
@@ -1199,7 +1230,9 @@ static void LiftStick(short* x, short* y, double minimum)
             // Prepare controller haptics for use
             [self initializeControllerHaptics:limeController];
 
-            [_controllers setObject:limeController forKey:[NSNumber numberWithInteger:controller.playerIndex]];
+            @synchronized(_controllers) {
+                [_controllers setObject:limeController forKey:[NSNumber numberWithInteger:controller.playerIndex]];
+            }
             
             Log(LOG_I, @"Assigning controller index: %d", i);
             return limeController;
@@ -1370,7 +1403,9 @@ static void LiftStick(short* x, short* y, double minimum)
             
             // Inform the server of the updated active gamepads before removing this controller
             [self updateFinished:limeController];
-            [self->_controllers removeObjectForKey:[NSNumber numberWithInteger:controller.playerIndex]];
+            @synchronized(self->_controllers) {
+                [self->_controllers removeObjectForKey:[NSNumber numberWithInteger:controller.playerIndex]];
+            }
             
             // Re-evaluate the on-screen control mode
             [self updateAutoOnScreenControlMode];
@@ -1462,6 +1497,9 @@ static void LiftStick(short* x, short* y, double minimum)
 
 -(void) cleanup
 {
+    // First, on the main thread: feedback blocks queued to main by the connection's thread check
+    // this, so none can start rumble or trigger effects after the resets below
+    _stopped = YES;
     [[NSNotificationCenter defaultCenter] removeObserver:_controllerConnectObserver];
     [[NSNotificationCenter defaultCenter] removeObserver:_controllerDisconnectObserver];
     [[NSNotificationCenter defaultCenter] removeObserver:_mouseConnectObserver];
@@ -1491,7 +1529,9 @@ static void LiftStick(short* x, short* y, double minimum)
 #if !TARGET_OS_TV
     [MNVendorRumble.shared stop];
 #endif
-    [_controllers removeAllObjects];
+    @synchronized(_controllers) {
+        [_controllers removeAllObjects];
+    }
     
     for (GCController* controller in [GCController controllers]) {
         if ([ControllerSupport isSupportedGamepad:controller]) {
