@@ -209,6 +209,9 @@ private final class TouchWatcher: UIGestureRecognizer {
     private var active = false
     private weak var focused: UIView?
     private var lastFocusFrame: CGRect?
+    /// Where the ring was on each screen (container view → target), to come back to after a sheet
+    private let savedFocus = NSMapTable<UIView, UIView>.weakToWeakObjects()
+    private weak var lastContainer: UIView?
     private var pendingWizard = false
     private var overlayHost: UIViewController?
     private weak var watchedWindow: UIWindow?
@@ -303,12 +306,16 @@ private final class TouchWatcher: UIGestureRecognizer {
             deactivate()
             return
         }
-        if state != old {
+        func pressed(_ key: KeyPath<Pad, Bool>) -> Bool { state[keyPath: key] && !old[keyPath: key] }
+
+        // The first controller input after a touch only brings the ring back, except on an alert
+        // (where the buttons' meanings are shown as soon as it's used)
+        var revealing = false
+        if !active && state != old {
             active = true
+            revealing = !(top is UIAlertController)
         }
         guard active else { return }
-
-        func pressed(_ key: KeyPath<Pad, Bool>) -> Bool { state[keyPath: key] && !old[keyPath: key] }
 
         if let alert = top as? UIAlertController {
             drive(alert: alert, pad: pad, pressed: pressed)
@@ -320,6 +327,15 @@ private final class TouchWatcher: UIGestureRecognizer {
         var screen: (back: (() -> Void)?, settings: (() -> Void)?) = (nil, nil)
         collect(container, window: window, targets: &targets, screen: &screen)
 
+        if container !== lastContainer {
+            // Another screen: back to where the ring was on it, or start at its top
+            if let previousContainer = lastContainer, let focused {
+                savedFocus.setObject(focused, forKey: previousContainer)
+            }
+            lastContainer = container
+            focused = savedFocus.object(forKey: container)
+            lastFocusFrame = nil
+        }
         if let focused, !targets.contains(where: { $0 === focused }) {
             self.focused = nil
         }
@@ -328,7 +344,10 @@ private final class TouchWatcher: UIGestureRecognizer {
         }
 
         let now = CACurrentMediaTime()
-        if let retry = retryDirection {
+        if revealing {
+            heldDirection = state.direction
+            nextRepeat = now + repeatDelay
+        } else if let retry = retryDirection {
             retryDirection = nil
             move(retry, targets: targets, allowScroll: false)
         } else if let direction = state.direction {
@@ -343,7 +362,9 @@ private final class TouchWatcher: UIGestureRecognizer {
         heldDirection = state.direction
         continueSliderNudge()
 
-        if pressed(\.a), let focused {
+        if revealing {
+            // Shown, nothing pressed
+        } else if pressed(\.a), let focused {
             activate(focused)
         } else if pressed(\.b) {
             screen.back?()
@@ -458,17 +479,28 @@ private final class TouchWatcher: UIGestureRecognizer {
         view.convert(view.bounds, to: nil)
     }
 
-    /// Nearest to where the ring last was; otherwise the first app (or row) at the top left.
+    /// Nearest to where the ring last was; otherwise the top-left item, before the navigation
+    /// bar's buttons.
     private func initialTarget(_ targets: [UIView]) -> UIView? {
         if let last = lastFocusFrame {
             return targets.min { distance(frame($0), last) < distance(frame($1), last) }
         }
-        let preferred = targets.filter { pane(of: $0) == 1 }
-        let pool = preferred.isEmpty ? targets.filter { pane(of: $0) != nil } : preferred
-        return (pool.isEmpty ? targets : pool).min {
+        let content = targets.filter { !isInBar($0) }
+        return (content.isEmpty ? targets : content).min {
             let a = frame($0), b = frame($1)
             return (a.minY, a.minX) < (b.minY, b.minX)
         }
+    }
+
+    private func isInBar(_ view: UIView) -> Bool {
+        var current = view.superview
+        while let v = current {
+            if v is UINavigationBar || v is UIToolbar {
+                return true
+            }
+            current = v.superview
+        }
+        return false
     }
 
     private func distance(_ a: CGRect, _ b: CGRect) -> CGFloat {
