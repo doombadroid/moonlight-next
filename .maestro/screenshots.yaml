@@ -27,20 +27,23 @@ appId: com.doombadroid.moonlume
 # The stream (landscape): on-screen gamepad over the demo frame
 - tapOn: "Resume"
 - extendedWaitUntil:
-    visible: "Stream menu"
+    visible:
+      id: "DemoStreamFrame"
     timeout: 15000
 - waitForAnimationToEnd:
     timeout: 4000
-- takeScreenshot: 02-stream
+- takeScreenshot: 02-stream-land
 
-- tapOn: "Stream menu"
+- tapOn:
+    point: "88%,8%"
 - extendedWaitUntil:
     visible: "Disconnect"
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 2000
-- takeScreenshot: 03-stream-menu
+- takeScreenshot: 03-stream-menu-land
 
+# The ••• menu button isn't in the XCTest hierarchy: it's tapped where it is (top right).
 # Edit Controls, then the widget picker
 - tapOn: "Edit Controls"
 - extendedWaitUntil:
@@ -48,14 +51,14 @@ appId: com.doombadroid.moonlume
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 2000
-- takeScreenshot: 04-edit-controls
+- takeScreenshot: 04-edit-controls-land
 - tapOn: "Add widget"
 - extendedWaitUntil:
     visible: "Add Widget"
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 2000
-- takeScreenshot: 04b-widget-picker
+- takeScreenshot: 04b-widget-picker-land
 - tapOn: "Cancel"
 - waitForAnimationToEnd:
     timeout: 2000
@@ -67,14 +70,16 @@ appId: com.doombadroid.moonlume
     timeout: 2000
 
 # The keyboard & trackpad input deck
-- tapOn: "Stream menu"
+- tapOn:
+    point: "88%,8%"
 - tapOn: "Keyboard & Trackpad"
 - waitForAnimationToEnd:
     timeout: 3000
-- takeScreenshot: 05-input-deck
+- takeScreenshot: 05-input-deck-land
 
 # Back to the launcher, then Settings (portrait): Controller and Gyro
-- tapOn: "Stream menu"
+- tapOn:
+    point: "88%,8%"
 - tapOn: "Disconnect"
 - extendedWaitUntil:
     visible: "NOW RUNNING"

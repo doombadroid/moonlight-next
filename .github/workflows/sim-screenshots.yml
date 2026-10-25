@@ -118,7 +118,22 @@ jobs:
           # takeScreenshot writes plain names relative to the working directory.
           mkdir -p "$RUNNER_TEMP/shots" && cd "$RUNNER_TEMP/shots"
           maestro --device "$UDID" test "$GITHUB_WORKSPACE/.maestro/screenshots.yaml"
-          for f in *.png; do echo "$f $(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')"; done
+
+      - name: Collect and orient the screenshots
+        if: always()
+        run: |
+          # Maestro saves takeScreenshot files in the working directory or in its test folder.
+          # The simulator captures portrait framebuffers: *-land shots are turned to landscape.
+          mkdir -p "$RUNNER_TEMP/appstore"
+          { ls "$RUNNER_TEMP"/shots/*.png; find ~/.maestro/tests -path '*takeScreenshot*' -name '*.png'; } 2>/dev/null \
+            | while read -r f; do cp "$f" "$RUNNER_TEMP/appstore/"; done
+          cd "$RUNNER_TEMP/appstore"
+          for f in *.png; do
+            [ -e "$f" ] || continue
+            w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/ {print $2}'); h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/ {print $2}')
+            case "$f" in *-land.png) [ "$h" -gt "$w" ] && sips -r 270 "$f" >/dev/null ;; esac
+            echo "$f $(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')"
+          done
 
       - name: App log
         if: always()
@@ -130,6 +145,7 @@ jobs:
         with:
           name: sim-screenshots
           path: |
+            ${{ runner.temp }}/appstore
             ${{ runner.temp }}/shots
             ${{ runner.temp }}/sim-build.log
             ~/.maestro/tests
