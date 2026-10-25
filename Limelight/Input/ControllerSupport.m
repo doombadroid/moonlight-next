@@ -894,7 +894,7 @@ static void LiftStick(short* x, short* y, double minimum)
                 if (quickMenuHidden < 0 || [MNControllerMouse.shared intercept:gamepad]) {
                     // Controller mouse mode or the quick menu: the game sees this pad idle, so a
                     // short press of the menu button isn't replayed either (later, on another pad)
-                    [MNQuickMenu.shared takeTap];
+                    (void)[MNQuickMenu.shared takeTap];
                     if (limeController.lastButtonFlags || limeController.lastLeftTrigger || limeController.lastRightTrigger ||
                         limeController.lastLeftStickX || limeController.lastLeftStickY ||
                         limeController.lastRightStickX || limeController.lastRightStickY) {
