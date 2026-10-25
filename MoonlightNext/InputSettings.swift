@@ -15,6 +15,7 @@ struct InputSettings: View {
     @AppStorage("mnHapticsEnabled") private var hapticsEnabled = true
     @AppStorage("mnOSCPressHighlight") private var pressHighlight = true
     @AppStorage("mnTrackpadSpeed") private var trackpadSpeed = 2.0
+    @AppStorage(PalmRejection.key) private var palmRejection = PalmRejection.normal.rawValue
     @AppStorage(MNTouchPrefs.touchModeKey) private var touchMode = MNTouchMode.touchpad.rawValue
     @AppStorage(MNTouchPrefs.pointerSpeedKey) private var touchpadPointerSpeed = 1.0
     @AppStorage(MNTouchPrefs.scrollSpeedKey) private var scrollSpeed = 1.0
@@ -66,6 +67,12 @@ struct InputSettings: View {
             SettingToggle("Haptics on button presses", id: "mnHapticsEnabled", isOn: $hapticsEnabled)
             SettingToggle("Highlight pressed buttons", id: "mnOSCPressHighlight", isOn: $pressHighlight)
             SettingSlider("Trackpad speed", id: "mnTrackpadSpeed", value: $trackpadSpeed, in: 0.5...5)
+            SettingChoice("Palm rejection", id: PalmRejection.key,
+                          tip: "For the keyboard and trackpad deck. Ignores wide contacts such as the base of a palm, touches right beside one, and new trackpad touches while you type. Strict also waits 50 ms before sending a key, and drops it if the touch spreads into a palm.") {
+                Picker("Palm rejection", selection: $palmRejection) {
+                    ForEach(PalmRejection.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+                }
+            }
         } footer: {
             Text(touchModeFooter)
         }

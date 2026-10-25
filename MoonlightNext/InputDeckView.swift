@@ -242,19 +242,28 @@ private struct KeyGrid: View {
                                    label: state.fnOn ? (key.fnLabel ?? key.label) : key.label)
                                 .frame(width: unit * key.weight)
                                 .zIndex(pressed.contains(key.id) ? 1 : 0)
-                                .onPress(down: {
-                                    pressed.insert(key.id)
+                                .allowsHitTesting(false)
+                                .accessibilityAction {
                                     state.press(key)
-                                }, up: {
-                                    pressed.remove(key.id)
                                     state.release(key)
-                                })
+                                }
                         }
                     }
                 }
                 .frame(height: keyHeight)
             }
         }
+        // One touch surface over the whole grid, so palm rejection can see each touch's size
+        .overlay(KeyTouchSurface(rows: rows.map { $0.map(\.weight) }, keyHeight: keyHeight,
+                                 onDown: { r, i in
+                                     let key = rows[r][i]
+                                     pressed.insert(key.id)
+                                     state.press(key)
+                                 }, onUp: { r, i in
+                                     let key = rows[r][i]
+                                     pressed.remove(key.id)
+                                     state.release(key)
+                                 }))
     }
 
     private func isLatched(_ key: Key) -> Bool {
@@ -354,11 +363,40 @@ private struct ClickButton: View {
             .overlay(UnevenRoundedRectangle(topLeadingRadius: corners.0, bottomLeadingRadius: corners.0,
                                             bottomTrailingRadius: corners.1, topTrailingRadius: corners.1)
                 .stroke(Color(hex: 0x1F1F25), lineWidth: 1))
-            .contentShape(Rectangle())
-            .onPress(down: { pressed = true; Feedback.clickPress(); MNInput.mouseButton(button, down: true) },
-                     up: { pressed = false; MNInput.mouseButton(button, down: false) })
+            .overlay(PressSurface { down in
+                pressed = down
+                if down { Feedback.clickPress() }
+                MNInput.mouseButton(button, down: down)
+            })
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                MNInput.mouseButton(button, down: true)
+                MNInput.mouseButton(button, down: false)
+            }
     }
+}
+
+private struct KeyTouchSurface: UIViewRepresentable {
+    let rows: [[CGFloat]]
+    let keyHeight: CGFloat
+    let onDown: (Int, Int) -> Void
+    let onUp: (Int, Int) -> Void
+
+    func makeUIView(context: Context) -> KeyTouchView { KeyTouchView() }
+    func updateUIView(_ view: KeyTouchView, context: Context) {
+        view.rows = rows
+        view.keyHeight = keyHeight
+        view.onDown = onDown
+        view.onUp = onUp
+    }
+    static func dismantleUIView(_ view: KeyTouchView, coordinator: ()) { view.releaseAll() }
+}
+
+private struct PressSurface: UIViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    func makeUIView(context: Context) -> PressTouchView { PressTouchView() }
+    func updateUIView(_ view: PressTouchView, context: Context) { view.onChange = onChange }
 }
 
 /// A UIKit view so one- and two-finger pans and taps can be told apart.
@@ -383,10 +421,44 @@ final class TrackpadUIView: UIView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) { pad.touchesBegan(touches) }
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { pad.touchesMoved(touches) }
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { pad.touchesEnded(touches) }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { pad.touchesCancelled(touches) }
+    /// Touches the trackpad accepted; palms and touches that land while typing never reach it
+    private var accepted = Set<ObjectIdentifier>()
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let typing = PalmGuard.shared.typingRecently
+        let fresh = touches.filter { !PalmGuard.shared.isPalm($0, landing: true) && !typing }
+        accepted.formUnion(fresh.map(ObjectIdentifier.init))
+        if !fresh.isEmpty { pad.touchesBegan(fresh) }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let mine = touches.filter { accepted.contains(ObjectIdentifier($0)) }
+        // A touch that spreads into a palm is withdrawn as if cancelled
+        let palms = mine.filter { PalmGuard.shared.isPalm($0) }
+        if !palms.isEmpty {
+            accepted.subtract(palms.map(ObjectIdentifier.init))
+            pad.touchesCancelled(palms)
+        }
+        let moving = mine.subtracting(palms)
+        if !moving.isEmpty { pad.touchesMoved(moving) }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let mine = lift(touches)
+        if !mine.isEmpty { pad.touchesEnded(mine) }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let mine = lift(touches)
+        if !mine.isEmpty { pad.touchesCancelled(mine) }
+    }
+
+    private func lift(_ touches: Set<UITouch>) -> Set<UITouch> {
+        touches.forEach { PalmGuard.shared.touchLifted($0) }
+        let mine = touches.filter { accepted.contains(ObjectIdentifier($0)) }
+        accepted.subtract(mine.map(ObjectIdentifier.init))
+        return mine
+    }
 }
 
 // MARK: - Gamepad
