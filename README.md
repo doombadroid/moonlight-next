@@ -47,8 +47,8 @@ Half-folded (tabletop), with the keyboard and trackpad deck or the gamepad deck 
 Standard iPhone (from the simulator's demo mode, which shows a sample PC and placeholder game art):
 
 <p>
-<img src="docs/screenshots/iphone/01-launcher.webp" alt="MoonLume's launcher on an iPhone, showing a PC and its games" height="420">
-<img src="docs/screenshots/iphone/06-settings-gyro.webp" alt="MoonLume's gyro aiming settings on an iPhone" height="420">
+<img src="docs/screenshots/iphone/01-launcher.webp" alt="MoonLume's launcher on an iPhone, showing a PC and its games" height="440">
+<img src="docs/screenshots/iphone/06-settings-gyro.webp" alt="MoonLume's gyro aiming settings on an iPhone" height="440">
 </p>
 <p>
 <img src="docs/screenshots/iphone/02-stream-land.webp" alt="A stream on an iPhone in landscape with the on-screen gamepad" width="49%">
@@ -73,6 +73,20 @@ Standard iPhone (from the simulator's demo mode, which shows a sample PC and pla
 <img src="docs/screenshots/appstore/iphone-duo-inner-5-tabletop-gamepad-flat.webp" alt="App Store screenshot: iphone duo inner 5 tabletop gamepad flat" height="300">
 <img src="docs/screenshots/appstore/iphone-duo-outer-1-launcher.webp" alt="App Store screenshot: iphone duo outer 1 launcher" height="300">
 <img src="docs/screenshots/appstore/iphone-duo-outer-2-race-folded.webp" alt="App Store screenshot: iphone duo outer 2 race folded" height="300">
+</p>
+</details>
+
+<details>
+<summary>App Store screenshots (standard iPhone)</summary>
+
+<p>
+<img src="docs/screenshots/appstore/iphone-6.3-01-launcher.webp" alt="App Store screenshot: iphone 6.3 01 launcher" height="300">
+<img src="docs/screenshots/appstore/iphone-6.3-02-stream-land.webp" alt="App Store screenshot: iphone 6.3 02 stream land" height="300">
+<img src="docs/screenshots/appstore/iphone-6.3-03-stream-menu-land.webp" alt="App Store screenshot: iphone 6.3 03 stream menu land" height="300">
+<img src="docs/screenshots/appstore/iphone-6.3-04-edit-controls-land.webp" alt="App Store screenshot: iphone 6.3 04 edit controls land" height="300">
+<img src="docs/screenshots/appstore/iphone-6.3-04b-widget-picker-land.webp" alt="App Store screenshot: iphone 6.3 04b widget picker land" height="300">
+<img src="docs/screenshots/appstore/iphone-6.3-05-input-deck-land.webp" alt="App Store screenshot: iphone 6.3 05 input deck land" height="300">
+<img src="docs/screenshots/appstore/iphone-6.3-06-settings-gyro.webp" alt="App Store screenshot: iphone 6.3 06 settings gyro" height="300">
 </p>
 </details>
 
